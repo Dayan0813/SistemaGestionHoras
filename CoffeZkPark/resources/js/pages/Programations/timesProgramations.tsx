@@ -17,6 +17,7 @@ type Calendar = {
     hora_entrada: string;
     hora_salida: string;
     shift_type: 'D' | 'N';
+    is_custom: boolean;
 };
 
 type WorkPosition = {
@@ -76,7 +77,9 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
         axios
             .get(`/calendars/area/${areaId}`)
             .then((res) => {
-                setCalendars(res.data);
+                // Solo turnos del catálogo general: aquí se define el turno por defecto
+                // para todo el grupo, no tiene sentido ofrecer turnos personalizados de otros empleados
+                setCalendars((res.data as Calendar[]).filter((cal) => !cal.is_custom));
                 setCalendarId('');
             })
             .finally(() => setLoadingCalendars(false));

@@ -3,7 +3,10 @@ import axios from 'axios';
 import dayjs from 'dayjs';
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
+import { CalendarCog, Settings } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import ManageCalendarsModal from './ManageCalendarsModal';
+import ManageProgramationsModal from './ManageProgramationsModal';
 
 dayjs.extend(isSameOrAfter);
 dayjs.extend(isSameOrBefore);
@@ -17,6 +20,9 @@ interface Calendar {
     area_id: number;
     hora_entrada: string | null;
     hora_salida: string | null;
+    shift_type: 'D' | 'N';
+    is_custom: boolean;
+    created_for_employee_uid: string | null;
 }
 
 interface ProgramationOverride {
@@ -27,6 +33,9 @@ interface ProgramationOverride {
 
 interface Programation {
     id: number;
+    calendar_id: number;
+    work_position_id: number | null;
+    status: string;
     start_date: string;
     end_date: string;
     calendar: Calendar;
@@ -51,6 +60,12 @@ export default function DetailsProgramations() {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [calendars, setCalendars] = useState<Calendar[]>([]);
     const [loading, setLoading] = useState(false);
+    const [managingEmployee, setManagingEmployee] = useState<Employee | null>(null);
+    const [managingCalendars, setManagingCalendars] = useState(false);
+
+    const fetchCalendars = useCallback(() => {
+        axios.get(route('calendars.byArea', areaId)).then((res) => setCalendars(res.data));
+    }, [areaId]);
 
     const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth();
     const days = Array.from({ length: daysInMonth }, (_, i) => dayjs(`${year}-${month}-${i + 1}`));
@@ -74,11 +89,6 @@ export default function DetailsProgramations() {
         return override?.calendar ?? programation.calendar;
     };
 
-    const mergeCalendars = (base: Calendar, calendars: Calendar[]) => {
-        const exists = calendars.some((c) => c.id === base.id);
-        return exists ? calendars : [base, ...calendars];
-    };
-
     /* =========================
        FETCH DATA
     ========================= */
@@ -98,17 +108,8 @@ export default function DetailsProgramations() {
     }, [fetchProgramations]);
 
     useEffect(() => {
-        axios.get(route('calendars.byArea', areaId)).then((res) => setCalendars(res.data));
-    }, [areaId]);
-
-    const saveOverride = async (programationId: number, date: string, calendarId: number) => {
-        await axios.patch(route('programations.override.save', programationId), {
-            date,
-            calendar_id: calendarId,
-        });
-
-        fetchProgramations();
-    };
+        fetchCalendars();
+    }, [fetchCalendars]);
 
     /* =========================
        RENDER
@@ -141,6 +142,14 @@ export default function DetailsProgramations() {
                         </option>
                     ))}
                 </select>
+
+                <button
+                    onClick={() => setManagingCalendars(true)}
+                    title="Cambios que afectan a todos los empleados del área"
+                    className="ml-auto flex items-center gap-1 rounded-md border border-[#a81c24] px-3 py-2 text-sm font-semibold text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
+                >
+                    <CalendarCog className="h-4 w-4" /> Turnos del área (todos)
+                </button>
             </div>
 
             {/* TABLA */}
@@ -175,6 +184,14 @@ export default function DetailsProgramations() {
                                             <div className="text-sm font-medium text-gray-900">{employee.name}</div>
                                             <div className="text-xs text-gray-400">{employee.uid}</div>
                                         </div>
+
+                                        <button
+                                            onClick={() => setManagingEmployee(employee)}
+                                            title={`Turnos de ${employee.name} (solo este empleado)`}
+                                            className="ml-auto rounded-md border border-[#a81c24] p-1 text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
+                                        >
+                                            <Settings className="h-4 w-4" />
+                                        </button>
                                     </div>
                                 </td>
 
@@ -188,21 +205,10 @@ export default function DetailsProgramations() {
                                     }
 
                                     const calendar = getCalendarForDay(programation, dayISO);
-                                    const calendarsForSelect = mergeCalendars(calendar, calendars);
 
                                     return (
-                                        <td key={dayISO} className="h-[72px] w-[80px] border border-[#a81c24]">
-                                            <select
-                                                className="h-full w-full cursor-pointer appearance-none bg-transparent text-center text-gray-700 hover:bg-gray-50 focus:outline-none"
-                                                value={String(calendar.id)}
-                                                onChange={(e) => saveOverride(programation.id, dayISO, Number(e.target.value))}
-                                            >
-                                                {calendarsForSelect.map((cal) => (
-                                                    <option key={cal.id} value={cal.id}>
-                                                        {calendarLabel(cal)}
-                                                    </option>
-                                                ))}
-                                            </select>
+                                        <td key={dayISO} className="h-[72px] w-[80px] border border-[#a81c24] text-center text-gray-700">
+                                            {calendarLabel(calendar)}
                                         </td>
                                     );
                                 })}
@@ -213,6 +219,31 @@ export default function DetailsProgramations() {
             </div>
 
             {loading && <div className="mt-4 text-sm text-gray-500">Cargando…</div>}
+
+            {managingCalendars && (
+                <ManageCalendarsModal
+                    areaId={areaId}
+                    calendars={calendars}
+                    onClose={() => setManagingCalendars(false)}
+                    onChanged={fetchCalendars}
+                />
+            )}
+
+            {managingEmployee && (
+                <ManageProgramationsModal
+                    employeeUid={managingEmployee.uid}
+                    employeeName={managingEmployee.name}
+                    areaId={areaId}
+                    calendars={calendars}
+                    programations={managingEmployee.programations}
+                    onClose={() => setManagingEmployee(null)}
+                    onChanged={() => {
+                        setManagingEmployee(null);
+                        fetchProgramations();
+                    }}
+                    onCalendarCreated={fetchCalendars}
+                />
+            )}
         </div>
     );
 }

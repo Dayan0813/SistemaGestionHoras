@@ -7,9 +7,12 @@ use Illuminate\Database\Eloquent\Model;
 class calendars extends Model
 {
     protected $fillable = [
+        'area_id',
         'hora_entrada',
         'hora_salida',
         'shift_type', // D or N
+        'is_custom', // true = creado al vuelo para un empleado, no aparece en el catálogo general del área
+        'created_for_employee_uid', // dueño del turno cuando is_custom = true
     ];
 
     //
@@ -24,5 +27,12 @@ class calendars extends Model
     public function overrides()
     {
         return $this->hasMany(ProgramationOverride::class, 'calendar_id');
+    }
+
+    //
+
+    public function createdForEmployee()
+    {
+        return $this->belongsTo(Employee::class, 'created_for_employee_uid', 'uid');
     }
 }

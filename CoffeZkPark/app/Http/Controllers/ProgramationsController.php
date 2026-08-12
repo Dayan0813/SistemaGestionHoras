@@ -121,9 +121,66 @@ class ProgramationsController extends Controller
 
     /**
      * ===========================================
-     * 
+     *
+     *  Aplicar un turno como excepcion a uno o varios
+     *  dias puntuales, para todos los empleados del
+     *  area que esten programados esos dias
+     *
+     * ===========================================
+     */
+
+    public function bulkOverride(Request $request)
+    {
+        $validated = $request->validate([
+            'area_id' => 'required|integer|exists:areas,id',
+            'calendar_id' => 'required|exists:calendars,id',
+            'dates' => 'required|array|min:1',
+            'dates.*' => 'date',
+        ]);
+
+        $this->ensureAreaAcces($validated['area_id']);
+
+        // Solo turnos del catálogo general del área, no personalizados de un empleado
+        $calendar = calendars::where('id', $validated['calendar_id'])
+            ->where('area_id', $validated['area_id'])
+            ->where('is_custom', false)
+            ->firstOrFail();
+
+        $employeesAfectados = 0;
+
+        foreach ($validated['dates'] as $date) {
+            $programations = Programations::where('area_id', $validated['area_id'])
+                ->where('status', '!=', 'Cancelado')
+                ->where('start_date', '<=', $date)
+                ->where('end_date', '>=', $date)
+                ->get();
+
+            foreach ($programations as $programation) {
+                ProgramationOverride::updateOrCreate(
+                    [
+                        'programation_id' => $programation->id,
+                        'date' => $date,
+                    ],
+                    [
+                        'calendar_id' => $calendar->id,
+                    ]
+                );
+
+                $employeesAfectados++;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'empleados_afectados' => $employeesAfectados,
+        ]);
+    }
+
+    /**
+     * ===========================================
+     *
      *  Retorno de los valores dinamicos para el detalle
-     * 
+     *
      * ===========================================
      */
 
@@ -254,26 +311,10 @@ class ProgramationsController extends Controller
     }
 
     /**
-     * ===========================================
-     * 
-     *  Filtro de empleados por Area
-     * 
-     * ===========================================
-     */
-
-    public function getEmployeeByArea($areaId)
-    {
-        $this->ensureAreaAcces((int) $areaId);
-
-        $employees = Employee::where('area_id', $areaId)->get();
-        return response()->json($employees);
-    }
-
-    /**
      * ============================
-     * 
+     *
      *  Almacenamiento de la programacion
-     * 
+     *
      * ============================
      */
 
@@ -358,15 +399,8 @@ class ProgramationsController extends Controller
                     ->firstOrFail();
             }
 
-            // 5️ Evitar solapamientos
-            $exists = Programations::where('employee_uid', $employeeUid)
-                ->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('start_date', [$startDate, $endDate])
-                        ->orWhereBetween('end_date', [$startDate, $endDate]);
-                })
-                ->exists();
-
-            if ($exists) {
+            // 5️ Evitar solapamientos (ignorando programaciones ya canceladas)
+            if ($this->hasOverlap($employeeUid, $startDate, $endDate)) {
                 continue;
             }
 
@@ -391,10 +425,103 @@ class ProgramationsController extends Controller
     }
 
     /**
+     * ===========================================
+     *
+     *  Editar una programación existente
+     *
+     * ===========================================
+     */
+
+    public function update(Request $request, Programations $programation)
+    {
+        $this->ensureAreaAcces((int) $programation->area_id);
+
+        $validated = $request->validate([
+            'calendar_id' => 'required|exists:calendars,id',
+            'work_position_id' => 'nullable|exists:work_positions,id',
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after_or_equal:start_date',
+        ]);
+
+        // El calendario debe pertenecer al área de la programación
+        $calendar = calendars::where('id', $validated['calendar_id'])
+            ->where('area_id', $programation->area_id)
+            ->firstOrFail();
+
+        // El puesto (si viene) debe pertenecer al área
+        if (!empty($validated['work_position_id'])) {
+            WorkPosition::where('id', $validated['work_position_id'])
+                ->where('area_id', $programation->area_id)
+                ->firstOrFail();
+        }
+
+        // Evitar solapamientos con OTRAS programaciones activas del mismo empleado
+        if ($this->hasOverlap($programation->employee_uid, $validated['start_date'], $validated['end_date'], $programation->id)) {
+            return response()->json([
+                'message' => 'Ya existe otra programación activa para este empleado que se solapa con ese rango de fechas.',
+            ], 422);
+        }
+
+        $programation->update([
+            'calendar_id' => $validated['calendar_id'],
+            'type' => $calendar->shift_type,
+            'work_position_id' => $validated['work_position_id'] ?? null,
+            'start_date' => $validated['start_date'],
+            'end_date' => $validated['end_date'],
+        ]);
+
+        return response()->json(
+            $programation->fresh()->load(['calendar', 'area', 'employee'])
+        );
+    }
+
+    /**
+     * ===========================================
+     *
+     *  Cancelar (baja lógica) una programación
+     *
+     * ===========================================
+     */
+
+    public function cancel(Programations $programation)
+    {
+        $this->ensureAreaAcces((int) $programation->area_id);
+
+        $programation->update(['status' => 'Cancelado']);
+
+        return response()->json($programation);
+    }
+
+    /**
+     * ===========================================
+     *
+     *  Verifica si un empleado ya tiene otra programación
+     *  activa que se solape con el rango de fechas dado
+     *
+     * ===========================================
+     */
+
+    private function hasOverlap(string $employeeUid, string $startDate, string $endDate, ?int $excludeProgramationId = null): bool
+    {
+        return Programations::where('employee_uid', $employeeUid)
+            ->where('status', '!=', 'Cancelado')
+            ->when($excludeProgramationId, fn($q) => $q->where('id', '!=', $excludeProgramationId))
+            ->where(function ($q) use ($startDate, $endDate) {
+                $q->whereBetween('start_date', [$startDate, $endDate])
+                    ->orWhereBetween('end_date', [$startDate, $endDate])
+                    ->orWhere(function ($q2) use ($startDate, $endDate) {
+                        $q2->where('start_date', '<=', $startDate)
+                            ->where('end_date', '>=', $endDate);
+                    });
+            })
+            ->exists();
+    }
+
+    /**
      * ============================
-     * 
+     *
      * Filtro de empleados + contrato
-     * 
+     *
      * ============================
      */
 
