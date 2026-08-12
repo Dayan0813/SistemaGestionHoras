@@ -8,21 +8,21 @@ use Illuminate\Database\Eloquent\Model;
 class Employee extends Model
 {
     protected $fillable = [
-        'uid',
-        'userid',
-        'name',
-        'cardno',
-        'estado',
-        'documentos',
-        'dispositivo',
-        'horario',
-        'empresa',
-        'cargo_id',
-        'dependencia',
-        'centrocosto',
-        'area_id',
-        'contrato_id'
-    ];
+    'uid',
+    'userid',
+    'name',
+    'cardno',
+    'estado',
+    'documentos',
+    'dispositivo',
+    'horario',
+    'empresa',
+    'cargo_id',
+    'dependencia',
+    'centrocosto',
+    'area_id',
+    'contrato_id',
+];
 
 
     // Relaciones
