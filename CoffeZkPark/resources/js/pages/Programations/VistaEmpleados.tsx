@@ -1,5 +1,4 @@
-// VistaEmpleados.tsx (VERSION MODIFICADA)
-import { CheckCircle, Settings } from 'lucide-react';
+import { CheckCircle } from 'lucide-react';
 import React from 'react';
 
 interface Employee {
@@ -10,29 +9,13 @@ interface Employee {
     tipo_contrato: string;
 }
 
-interface ProgramationData {
-    // ...
-    group_code: string;
-}
-
 interface VistaEmpleadosProps {
     employees: Employee[];
     selectedEmployee: number[];
     setSelectedEmployee: React.Dispatch<React.SetStateAction<number[]>>;
-    customProgramations: Record<number, ProgramationData>;
-    onOpenCustom: (empId: number) => void;
-
-    groupCode: string | null;
 }
 
-export default function VistaEmpleados({
-    employees,
-    selectedEmployee,
-    setSelectedEmployee,
-    customProgramations,
-    onOpenCustom,
-    groupCode,
-}: VistaEmpleadosProps) {
+export default function VistaEmpleados({ employees, selectedEmployee, setSelectedEmployee }: VistaEmpleadosProps) {
     if (employees.length === 0) {
         return <p className="mt-5 mb-5 text-center text-gray-500">Selecciona un área para ver los empleados.</p>;
     }
@@ -47,7 +30,6 @@ export default function VistaEmpleados({
             {/* ... Mapeo de empleados ... (sin cambios) */}
             {employees.map((emp) => {
                 const isSelected = selectedEmployee.includes(emp.uid);
-                const hasCustom = !!customProgramations[emp.uid];
 
                 return (
                     <div
@@ -71,25 +53,6 @@ export default function VistaEmpleados({
 
                         {/* Derecha: acciones */}
                         <div className="flex items-center gap-2">
-                            {/* Botón de ajuste individual */}
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onOpenCustom(emp.uid);
-                                }}
-                                title="Ajustar programación individual"
-                                className="rounded-md border border-[#a81c24] p-1 text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
-                            >
-                                <Settings className="h-4 w-4" />
-                            </button>
-
-                            {/* Indicador si tiene override */}
-                            {hasCustom && (
-                                <span className="flex items-center text-xs font-semibold text-green-600" title="Programación individual aplicada">
-                                    ✔ Ajuste
-                                </span>
-                            )}
-
                             {/* Icono de selección */}
                             {isSelected && <CheckCircle className="h-6 w-6 flex-shrink-0 text-[#95c020]" />}
                         </div>

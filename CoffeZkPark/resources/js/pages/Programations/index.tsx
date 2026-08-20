@@ -7,7 +7,6 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/es';
 import { Save } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import IndividualPModal from './IndividualPModal';
 import VistaEmpleados from './VistaEmpleados';
 import TimesProgramations from './timesProgramations';
 
@@ -55,7 +54,6 @@ interface PageProps extends InertiaPageProps {
     areas: Record<string, string>;
     calendars: Calendar[];
     contracts: Contract[];
-    nextGroupNumber: number;
 }
 
 /* =======================
@@ -63,13 +61,11 @@ interface PageProps extends InertiaPageProps {
 ======================= */
 
 export default function Index() {
-    const { areas, calendars, contracts = [], nextGroupNumber } = usePage<PageProps>().props;
+    const { areas, calendars, contracts = [] } = usePage<PageProps>().props;
 
     /* =======================
        ESTADOS
     ======================= */
-
-    const [groupCode, setGroupCode] = useState<string | null>(null);
 
     const [selectedArea, setSelectedArea] = useState('');
     const [selectedContract, setSelectedContract] = useState<number | ''>('');
@@ -80,7 +76,7 @@ export default function Index() {
     const [filteredEmployees, setFilteredEmployees] = useState<Employee[]>([]);
     const [selectedEmployee, setSelectedEmployee] = useState<number[]>([]);
 
-    const [customProgramations, setCustomProgramations] = useState<Record<number, ProgramationData>>({});
+    const [dayOverrides, setDayOverrides] = useState<Record<string, number>>({});
 
     const [programationData, setProgramationData] = useState<ProgramationData>({
         calendar_id: '',
@@ -92,8 +88,6 @@ export default function Index() {
         month: '',
         group_code: '',
     });
-    const [showCustomModal, setShowCustomModal] = useState(false);
-    const [selectedEmployeeForCustom, setSelectedEmployeeForCustom] = useState<number | null>(null);
 
     /* =======================
        🔹 CARGA DE EMPLEADOS (BACKEND)
@@ -133,22 +127,6 @@ export default function Index() {
     }, [selectedArea, selectedContract]);
 
     /* =======================
-       AGRUPAR
-    ======================= */
-
-    const createGroup = () => {
-        if (selectedEmployee.length === 0) {
-            alert('Selecciona al menos un empleado');
-            return;
-        }
-
-        if (groupCode) return;
-
-        const code = `ParCafe${String(nextGroupNumber).padStart(2, '0')}`;
-        setGroupCode(code);
-    };
-
-    /* =======================
        ENVIAR
     ======================= */
 
@@ -165,8 +143,7 @@ export default function Index() {
                 start_date: programationData.start_date,
                 end_date: programationData.end_date,
                 employees: selectedEmployee,
-                group_code: groupCode,
-                custom_programations: JSON.stringify(customProgramations),
+                day_overrides: JSON.stringify(dayOverrides),
             },
             {
                 onFinish: () => {
@@ -179,13 +156,12 @@ export default function Index() {
                 },
                 onSuccess: () => {
                     // 🔹 RESET TOTAL
-                    setGroupCode(null);
                     setSelectedArea('');
                     setSelectedContract('');
                     setSelectedMonth('');
                     setFilteredEmployees([]);
                     setSelectedEmployee([]);
-                    setCustomProgramations({});
+                    setDayOverrides({});
                     setProgramationData({
                         calendar_id: '',
                         work_position_id: '',
@@ -254,17 +230,7 @@ export default function Index() {
                 {/* Empleados */}
 
                 <div className="mx-auto mt-5 w-full rounded-lg border border-[#a81c24] p-6">
-                    <VistaEmpleados
-                        employees={filteredEmployees}
-                        selectedEmployee={selectedEmployee}
-                        setSelectedEmployee={setSelectedEmployee}
-                        customProgramations={customProgramations}
-                        onOpenCustom={(id) => {
-                            setSelectedEmployeeForCustom(id);
-                            setShowCustomModal(true);
-                        }}
-                        groupCode={groupCode}
-                    />
+                    <VistaEmpleados employees={filteredEmployees} selectedEmployee={selectedEmployee} setSelectedEmployee={setSelectedEmployee} />
                 </div>
 
                 {/* Configuración */}
@@ -282,58 +248,22 @@ export default function Index() {
                                 end_date: string;
                                 work_days: string[];
                                 excluded_dates: string[];
-                            }) =>
-                                setProgramationData((prev) => ({
-                                    ...prev,
-                                    ...data,
-                                })),
+                                day_overrides: Record<string, number>;
+                            }) => {
+                                const { day_overrides, ...rest } = data;
+                                setProgramationData((prev) => ({ ...prev, ...rest }));
+                                setDayOverrides(day_overrides);
+                            },
                         } as unknown as any)}
                     />
                 )}
 
                 {/* Botones */}
                 <div className="mt-6 flex justify-end space-x-5">
-                    <button onClick={createGroup} className="rounded border border-[#a81c24] px-4 py-2 font-semibold text-[#a81c24]">
-                        Agrupar Selección
-                    </button>
-
                     <button onClick={handleSubmit} className="flex items-center rounded border border-[#95c020] px-3 py-1 font-bold text-[#95c020]">
-                        <Save className="mr-2" /> Guardar y Ver Calendario
+                        <Save className="mr-2" /> Guardar 
                     </button>
                 </div>
-
-                {/* Modal */}
-                {showCustomModal && selectedEmployeeForCustom !== null && (
-                    <IndividualPModal
-                        employeeId={selectedEmployeeForCustom}
-                        calendars={calendars}
-                        areaId={selectedArea ? Number(selectedArea) : null}
-                        defaultData={
-                            customProgramations[selectedEmployeeForCustom] || {
-                                ...programationData,
-                                calendar_id: '',
-                                work_position_id: '',
-                                start_date: '',
-                                end_date: '',
-                                work_days: [],
-                                excluded_dates: [],
-                                month: selectedMonth,
-                                group_code: '',
-                            }
-                        }
-                        onClose={() => {
-                            setShowCustomModal(false);
-                            setSelectedEmployeeForCustom(null);
-                        }}
-                        onSave={(empId, data) => {
-                            setCustomProgramations((prev) => ({
-                                ...prev,
-                                [empId]: data,
-                            }));
-                        }}
-                        workPositions={[]}
-                    />
-                )}
             </div>
         </>
     );

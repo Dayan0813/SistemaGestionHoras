@@ -1,15 +1,9 @@
 import { usePage } from '@inertiajs/react';
 import axios from 'axios';
 import dayjs from 'dayjs';
-import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
-import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
-import { CalendarCog, Settings } from 'lucide-react';
+import { CalendarCog } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import ManageCalendarsModal from './ManageCalendarsModal';
-import ManageProgramationsModal from './ManageProgramationsModal';
-
-dayjs.extend(isSameOrAfter);
-dayjs.extend(isSameOrBefore);
 
 /* =========================
    TIPOS
@@ -60,15 +54,18 @@ export default function DetailsProgramations() {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [calendars, setCalendars] = useState<Calendar[]>([]);
     const [loading, setLoading] = useState(false);
-    const [managingEmployee, setManagingEmployee] = useState<Employee | null>(null);
     const [managingCalendars, setManagingCalendars] = useState(false);
 
     const fetchCalendars = useCallback(() => {
         axios.get(route('calendars.byArea', areaId)).then((res) => setCalendars(res.data));
     }, [areaId]);
 
-    const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth();
-    const days = Array.from({ length: daysInMonth }, (_, i) => dayjs(`${year}-${month}-${i + 1}`));
+    // new Date(year, monthIndex, day) siempre construye en hora local, a diferencia de
+    // dayjs(`${year}-${month}-${day}`) que delega en el parser nativo de Date y trata
+    // los strings sin hora como medianoche UTC (corriendo el día mostrado hacia atrás
+    // en zonas horarias detrás de UTC, ej. Colombia).
+    const daysInMonth = dayjs(new Date(year, month - 1, 1)).daysInMonth();
+    const days = Array.from({ length: daysInMonth }, (_, i) => dayjs(new Date(year, month - 1, i + 1)));
 
     /* =========================
        HELPERS
@@ -81,8 +78,13 @@ export default function DetailsProgramations() {
         return `${calendar.hora_entrada.slice(0, 5)} - ${calendar.hora_salida.slice(0, 5)}`;
     };
 
-    const getProgramationForDay = (employee: Employee, day: dayjs.Dayjs) =>
-        employee.programations.find((p) => day.isSameOrAfter(p.start_date, 'day') && day.isSameOrBefore(p.end_date, 'day')) ?? null;
+    // Comparación por string ISO ("YYYY-MM-DD" ordena igual lexicográfica y cronológicamente):
+    // evita re-parsear las fechas del backend con dayjs y el corrimiento de día por UTC.
+    // El backend serializa start_date/end_date como timestamp completo ("...T00:00:00.000000Z"),
+    // por eso se recortan a los primeros 10 caracteres antes de comparar contra dayISO
+    // (si no, el día exacto de start_date queda excluido: "2026-08-01" < "2026-08-01T...").
+    const getProgramationForDay = (employee: Employee, dayISO: string) =>
+        employee.programations.find((p) => dayISO >= p.start_date.slice(0, 10) && dayISO <= p.end_date.slice(0, 10)) ?? null;
 
     const getCalendarForDay = (programation: Programation, date: string) => {
         const override = programation.overrides?.find((o) => o.date === date);
@@ -184,21 +186,13 @@ export default function DetailsProgramations() {
                                             <div className="text-sm font-medium text-gray-900">{employee.name}</div>
                                             <div className="text-xs text-gray-400">{employee.uid}</div>
                                         </div>
-
-                                        <button
-                                            onClick={() => setManagingEmployee(employee)}
-                                            title={`Turnos de ${employee.name} (solo este empleado)`}
-                                            className="ml-auto rounded-md border border-[#a81c24] p-1 text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
-                                        >
-                                            <Settings className="h-4 w-4" />
-                                        </button>
                                     </div>
                                 </td>
 
                                 {/* DAYS */}
                                 {days.map((day) => {
                                     const dayISO = day.format('YYYY-MM-DD');
-                                    const programation = getProgramationForDay(employee, day);
+                                    const programation = getProgramationForDay(employee, dayISO);
 
                                     if (!programation) {
                                         return <td key={dayISO} className="h-[72px] w-[80px] border border-[#a81c24]"/>;
@@ -226,22 +220,6 @@ export default function DetailsProgramations() {
                     calendars={calendars}
                     onClose={() => setManagingCalendars(false)}
                     onChanged={fetchCalendars}
-                />
-            )}
-
-            {managingEmployee && (
-                <ManageProgramationsModal
-                    employeeUid={managingEmployee.uid}
-                    employeeName={managingEmployee.name}
-                    areaId={areaId}
-                    calendars={calendars}
-                    programations={managingEmployee.programations}
-                    onClose={() => setManagingEmployee(null)}
-                    onChanged={() => {
-                        setManagingEmployee(null);
-                        fetchProgramations();
-                    }}
-                    onCalendarCreated={fetchCalendars}
                 />
             )}
         </div>

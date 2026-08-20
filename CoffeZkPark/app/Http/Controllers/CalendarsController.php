@@ -21,7 +21,6 @@ class CalendarsController extends Controller
 
                 'is_custom',
                 'created_for_employee_uid',
- origin/feature/hernandez
             ]);
 
         return response()->json($calendars);

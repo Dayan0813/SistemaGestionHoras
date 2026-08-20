@@ -36,6 +36,7 @@ type TimesProgramationsProps = {
         end_date: string;
         work_days: string[];
         excluded_dates: string[];
+        day_overrides: Record<string, number>;
     }) => void;
 };
 
@@ -61,6 +62,7 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
     const [endDate, setEndDate] = useState('');
     const [workDays] = useState<string[]>([]);
     const [excludedDates, setExcludedDates] = useState<string[]>([]);
+    const [dayOverrides, setDayOverrides] = useState<Record<string, number>>({});
 
     /* =======================
        CALENDARS POR ÁREA
@@ -120,8 +122,27 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
             end_date: endDate,
             work_days: workDays,
             excluded_dates: excludedDates,
+            day_overrides: dayOverrides,
         });
-    }, [calendarId, workPositionId, startDate, endDate, workDays, excludedDates]);
+    }, [calendarId, workPositionId, startDate, endDate, workDays, excludedDates, dayOverrides]);
+
+    /* =======================
+       TURNO ESPECÍFICO POR DÍA
+    ======================= */
+
+    const updateDayOverride = (date: string, overrideCalendarId: number | null) => {
+        setDayOverrides((prev) => {
+            const next = { ...prev };
+
+            if (overrideCalendarId) {
+                next[date] = overrideCalendarId;
+            } else {
+                delete next[date];
+            }
+
+            return next;
+        });
+    };
 
     /* =======================
        RENDER
@@ -184,7 +205,13 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
                 </div>
             </div>
 
-            <DateGrid startDate={startDate} endDate={endDate} />
+            <DateGrid
+                startDate={startDate}
+                endDate={endDate}
+                calendars={calendars}
+                dayOverrides={dayOverrides}
+                onDayOverrideChange={updateDayOverride}
+            />
 
             {/* Exclusiones */}
             <div className="mt-3 flex flex-wrap gap-2">

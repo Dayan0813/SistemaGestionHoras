@@ -202,12 +202,6 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
         [ProgramationsController::class, 'DinamicDetails']
     )->name('programations.dinamicDetails');
 
-    // Vista de los overrides
-    Route::patch(
-        '/programations/{programation}/override',
-        [ProgramationsController::class, 'saveOverride']
-    )->name('programations.override.save');
-
     // Aplicar un turno a dias puntuales para toda el area
     Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
 

@@ -73,54 +73,6 @@ class ProgramationsController extends Controller
 
     /**
      * ===========================================
-     * 
-     *  Guardado de los overrides
-     * 
-     * ===========================================
-     */
-
-    public function saveOverride(Request $request, Programations $programation)
-    {
-        $this->ensureAreaAcces((int) $programation->area_id);
-
-        $validated = $request->validate([
-            'date' => 'required|date',
-            'calendar_id' => 'required|exists:calendars,id',
-        ]);
-
-        // Validar que la fecha esté dentro del rango de la programacion
-        $date = Carbon::parse($validated['date'])->startOfDay();
-
-        $start = Carbon::parse($programation->start_date)->startOfDay();
-        $end = Carbon::parse($programation->end_date)->endOfDay();
-
-        if (!$date->betweenIncluded($start, $end)) {
-            return response()->json([
-                'message' => 'La fecha está fuera del rango de la programación.'
-            ], 422);
-        }
-
-        // Validar que el calendario pertenezca al área de la programación
-        calendars::where('id', $validated['calendar_id'])
-            ->where('area_id', $programation->area_id)
-            ->firstOrFail();
-
-        // Guardar (upsert)
-        $override = ProgramationOverride::updateOrCreate(
-            [
-                'programation_id' => $programation->id,
-                'date' => $validated['date'],
-            ],
-            [
-                'calendar_id' => $validated['calendar_id'],
-            ]
-        );
-
-        return response()->json($override->load('calendar'));
-    }
-
-    /**
-     * ===========================================
      *
      *  Aplicar un turno como excepcion a uno o varios
      *  dias puntuales, para todos los empleados del
@@ -289,23 +241,12 @@ class ProgramationsController extends Controller
             ];
         }
 
-        // Código de grupo
-        $lastGroup = Programations::where('group_code', 'like', 'ParCafe%')
-            ->orderByDesc('id')
-            ->value('group_code');
-
-        $nextGroupNumber = 1;
-        if ($lastGroup && preg_match('/ParCafe(\d+)/', $lastGroup, $m)) {
-            $nextGroupNumber = ((int) $m[1]) + 1;
-        }
-
         return Inertia::render('Programations/index', [
             'areas' => $areas,
             'employees' => $employees,
             'calendars' => $calendars,
             'programations' => $programations,
             'months' => $months,
-            'nextGroupNumber' => $nextGroupNumber,
             'contracts' => $contracts,
         ]);
     }
@@ -347,7 +288,7 @@ class ProgramationsController extends Controller
             'employees' => 'required|array|min:1',
             'employees.*' => 'string|exists:employees,uid',
             'group_code' => 'nullable|string',
-            'custom_programations' => 'nullable|string',
+            'day_overrides' => 'nullable|string',
         ]);
 
         // Validacion del area
@@ -360,14 +301,15 @@ class ProgramationsController extends Controller
             $validated['area_id'] = $user->employee->area_id;
         }
 
-        $customProgramations = json_decode(
-            $validated['custom_programations'] ?? '{}',
+        // Turnos específicos por día definidos al crear (aplican a todos los empleados del lote)
+        $dayOverrides = json_decode(
+            $validated['day_overrides'] ?? '{}',
             true
         );
 
         // Creacion del codigo de grupo
 
-        $groupCode = $validated['group_code'];
+        $groupCode = $validated['group_code'] ?? null;
 
         if (empty($groupCode)) {
             $lastGroup = Programations::where('group_code', 'like', 'ParCafe%')
@@ -387,43 +329,33 @@ class ProgramationsController extends Controller
 
         foreach ($validated['employees'] as $employeeUid) {
 
-            // 1️ Datos base (global)
+            // 1 Datos base (compartidos por todo el lote)
             $calendarId = $validated['calendar_id'];
             $workPositionId = $validated['work_position_id'] ?? null;
             $startDate = $validated['start_date'];
             $endDate = $validated['end_date'];
 
-            // 2️ Override individual (si existe)
-            if (!empty($customProgramations[$employeeUid])) {
-                $override = $customProgramations[$employeeUid];
-
-                $calendarId = $override['calendar_id'] ?? $calendarId;
-                $workPositionId = $override['work_position_id'] ?? $workPositionId;
-                $startDate = $override['start_date'] ?? $startDate;
-                $endDate = $override['end_date'] ?? $endDate;
-            }
-
-            // 3️ Obtener calendario REAL (DE AQUÍ SALE TYPE)
+            // 3 Obtener calendario REAL (DE AQUÍ SALE TYPE)
             $calendar = calendars::where('id', $calendarId)
                 ->where('area_id', $validated['area_id'])
                 ->firstOrFail();
 
-            // 4️ Validar puesto contra área
+            // 4 Validar puesto contra área
             if ($workPositionId) {
                 WorkPosition::where('id', $workPositionId)
                     ->where('area_id', $validated['area_id'])
                     ->firstOrFail();
             }
 
-            // 5️ Evitar solapamientos (ignorando programaciones ya canceladas)
+            // 5 Evitar solapamientos (ignorando programaciones ya canceladas)
             if ($this->hasOverlap($employeeUid, $startDate, $endDate)) {
            continue;
             }
 
-            // 6️⃣ Crear programación CORRECTA
-            Programations::create([
+            // 6 Crear programación CORRECTA
+            $newProgramation = Programations::create([
                 'employee_uid' => $employeeUid,
-                'type' => $calendar->shift_type, // 🔥 AQUÍ SE ARREGLA
+                'type' => $calendar->shift_type, 
                 'area_id' => $validated['area_id'],
                 'calendar_id' => $calendarId,
                 'work_position_id' => $workPositionId,
@@ -432,6 +364,11 @@ class ProgramationsController extends Controller
                 'status' => 'Programado',
                 'group_code' => $groupCode,
             ]);
+
+            // 7 Turnos específicos por día (excepciones puntuales definidas al crear)
+            if (!empty($dayOverrides) && is_array($dayOverrides)) {
+                $this->applyDayOverrides($newProgramation, $dayOverrides, $validated['area_id'], $startDate, $endDate);
+            }
         }
 
 
@@ -531,6 +468,49 @@ class ProgramationsController extends Controller
                     });
             })
             ->exists();
+    }
+
+    /**
+     * ===========================================
+     *
+     *  Crea los overrides de turno por día definidos
+     *  al momento de crear una programación. Ignora
+     *  silenciosamente fechas fuera de rango o turnos
+     *  que no pertenezcan al área.
+     *
+     * ===========================================
+     */
+
+    private function applyDayOverrides(Programations $programation, array $dayOverrides, int $areaId, string $startDate, string $endDate): void
+    {
+        $start = Carbon::parse($startDate)->startOfDay();
+        $end = Carbon::parse($endDate)->endOfDay();
+
+        foreach ($dayOverrides as $date => $calendarId) {
+            if (!$calendarId) {
+                continue;
+            }
+
+            $parsedDate = Carbon::parse($date)->startOfDay();
+
+            if (!$parsedDate->betweenIncluded($start, $end)) {
+                continue;
+            }
+
+            $calendar = calendars::where('id', $calendarId)
+                ->where('area_id', $areaId)
+                ->first();
+
+            if (!$calendar) {
+                continue;
+            }
+
+            ProgramationOverride::create([
+                'programation_id' => $programation->id,
+                'date' => $parsedDate->toDateString(),
+                'calendar_id' => $calendar->id,
+            ]);
+        }
     }
 
     /**
