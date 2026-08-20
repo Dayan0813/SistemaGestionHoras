@@ -3,7 +3,10 @@ import CoffeLoader from '@/Components/Loaders/CoffeLoader';
 import { ProgramationCard } from '@/Components/ProgramationCard';
 import axios from 'axios';
 import { useEffect, useState } from 'react';
+<<<<<<< HEAD
 import ManageCalendarsModal from './ManageCalendarsModal';
+=======
+>>>>>>> origin/feature/hernandez
 
 interface AreaData {
     area_id: number;
@@ -12,6 +15,7 @@ interface AreaData {
     statues: string;
 }
 
+<<<<<<< HEAD
 interface Calendar {
     id: number;
     area_id: number;
@@ -22,10 +26,13 @@ interface Calendar {
     created_for_employee_uid: string | null;
 }
 
+=======
+>>>>>>> origin/feature/hernandez
 export default function VistaProgramations() {
     const [areas, setAreas] = useState<AreaData[]>([]);
     const [loading, setLoading] = useState(true);
 
+<<<<<<< HEAD
     const [managingAreaId, setManagingAreaId] = useState<number | null>(null);
     const [managingCalendars, setManagingCalendars] = useState<Calendar[]>([]);
 
@@ -40,6 +47,8 @@ export default function VistaProgramations() {
         }
     };
 
+=======
+>>>>>>> origin/feature/hernandez
     // Puedes hacer estos valores dinámicos con un selector de mes/año más adelante
     const year = new Date().getFullYear();
     const month = new Date().getMonth() + 1;
@@ -76,6 +85,7 @@ export default function VistaProgramations() {
             ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
                     {areas.map((area) => (
+<<<<<<< HEAD
                         <ProgramationCard key={area.area_id} areas={area} onManageTurnos={openTurnos} />
                     ))}
                 </div>
@@ -89,6 +99,12 @@ export default function VistaProgramations() {
                     onChanged={refreshTurnos}
                 />
             )}
+=======
+                        <ProgramationCard key={area.area_id} areas={area} />
+                    ))}
+                </div>
+            )}
+>>>>>>> origin/feature/hernandez
         </div>
     );
 }

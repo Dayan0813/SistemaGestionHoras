@@ -36,8 +36,11 @@ interface Calendar {
     hora_entrada: string;
     hora_salida: string;
     shift_type: 'D' | 'N';
+<<<<<<< HEAD
     is_custom: boolean;
     created_for_employee_uid: string | null;
+=======
+>>>>>>> origin/feature/hernandez
 }
 
 interface ProgramationData {

@@ -3,10 +3,14 @@ import axios from 'axios';
 import dayjs from 'dayjs';
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
+<<<<<<< HEAD
 import { CalendarCog, Settings } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import ManageCalendarsModal from './ManageCalendarsModal';
 import ManageProgramationsModal from './ManageProgramationsModal';
+=======
+import { useCallback, useEffect, useState } from 'react';
+>>>>>>> origin/feature/hernandez
 
 dayjs.extend(isSameOrAfter);
 dayjs.extend(isSameOrBefore);
@@ -20,9 +24,12 @@ interface Calendar {
     area_id: number;
     hora_entrada: string | null;
     hora_salida: string | null;
+<<<<<<< HEAD
     shift_type: 'D' | 'N';
     is_custom: boolean;
     created_for_employee_uid: string | null;
+=======
+>>>>>>> origin/feature/hernandez
 }
 
 interface ProgramationOverride {
@@ -33,9 +40,12 @@ interface ProgramationOverride {
 
 interface Programation {
     id: number;
+<<<<<<< HEAD
     calendar_id: number;
     work_position_id: number | null;
     status: string;
+=======
+>>>>>>> origin/feature/hernandez
     start_date: string;
     end_date: string;
     calendar: Calendar;
@@ -60,12 +70,15 @@ export default function DetailsProgramations() {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [calendars, setCalendars] = useState<Calendar[]>([]);
     const [loading, setLoading] = useState(false);
+<<<<<<< HEAD
     const [managingEmployee, setManagingEmployee] = useState<Employee | null>(null);
     const [managingCalendars, setManagingCalendars] = useState(false);
 
     const fetchCalendars = useCallback(() => {
         axios.get(route('calendars.byArea', areaId)).then((res) => setCalendars(res.data));
     }, [areaId]);
+=======
+>>>>>>> origin/feature/hernandez
 
     const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth();
     const days = Array.from({ length: daysInMonth }, (_, i) => dayjs(`${year}-${month}-${i + 1}`));
@@ -89,6 +102,14 @@ export default function DetailsProgramations() {
         return override?.calendar ?? programation.calendar;
     };
 
+<<<<<<< HEAD
+=======
+    const mergeCalendars = (base: Calendar, calendars: Calendar[]) => {
+        const exists = calendars.some((c) => c.id === base.id);
+        return exists ? calendars : [base, ...calendars];
+    };
+
+>>>>>>> origin/feature/hernandez
     /* =========================
        FETCH DATA
     ========================= */
@@ -108,8 +129,22 @@ export default function DetailsProgramations() {
     }, [fetchProgramations]);
 
     useEffect(() => {
+<<<<<<< HEAD
         fetchCalendars();
     }, [fetchCalendars]);
+=======
+        axios.get(route('calendars.byArea', areaId)).then((res) => setCalendars(res.data));
+    }, [areaId]);
+
+    const saveOverride = async (programationId: number, date: string, calendarId: number) => {
+        await axios.patch(route('programations.override.save', programationId), {
+            date,
+            calendar_id: calendarId,
+        });
+
+        fetchProgramations();
+    };
+>>>>>>> origin/feature/hernandez
 
     /* =========================
        RENDER
@@ -142,6 +177,7 @@ export default function DetailsProgramations() {
                         </option>
                     ))}
                 </select>
+<<<<<<< HEAD
 
                 <button
                     onClick={() => setManagingCalendars(true)}
@@ -150,6 +186,8 @@ export default function DetailsProgramations() {
                 >
                     <CalendarCog className="h-4 w-4" /> Turnos del área (todos)
                 </button>
+=======
+>>>>>>> origin/feature/hernandez
             </div>
 
             {/* TABLA */}
@@ -184,6 +222,7 @@ export default function DetailsProgramations() {
                                             <div className="text-sm font-medium text-gray-900">{employee.name}</div>
                                             <div className="text-xs text-gray-400">{employee.uid}</div>
                                         </div>
+<<<<<<< HEAD
 
                                         <button
                                             onClick={() => setManagingEmployee(employee)}
@@ -192,6 +231,8 @@ export default function DetailsProgramations() {
                                         >
                                             <Settings className="h-4 w-4" />
                                         </button>
+=======
+>>>>>>> origin/feature/hernandez
                                     </div>
                                 </td>
 
@@ -205,10 +246,28 @@ export default function DetailsProgramations() {
                                     }
 
                                     const calendar = getCalendarForDay(programation, dayISO);
+<<<<<<< HEAD
 
                                     return (
                                         <td key={dayISO} className="h-[72px] w-[80px] border border-[#a81c24] text-center text-gray-700">
                                             {calendarLabel(calendar)}
+=======
+                                    const calendarsForSelect = mergeCalendars(calendar, calendars);
+
+                                    return (
+                                        <td key={dayISO} className="h-[72px] w-[80px] border border-[#a81c24]">
+                                            <select
+                                                className="h-full w-full cursor-pointer appearance-none bg-transparent text-center text-gray-700 hover:bg-gray-50 focus:outline-none"
+                                                value={String(calendar.id)}
+                                                onChange={(e) => saveOverride(programation.id, dayISO, Number(e.target.value))}
+                                            >
+                                                {calendarsForSelect.map((cal) => (
+                                                    <option key={cal.id} value={cal.id}>
+                                                        {calendarLabel(cal)}
+                                                    </option>
+                                                ))}
+                                            </select>
+>>>>>>> origin/feature/hernandez
                                         </td>
                                     );
                                 })}
@@ -219,6 +278,7 @@ export default function DetailsProgramations() {
             </div>
 
             {loading && <div className="mt-4 text-sm text-gray-500">Cargando…</div>}
+<<<<<<< HEAD
 
             {managingCalendars && (
                 <ManageCalendarsModal
@@ -244,6 +304,8 @@ export default function DetailsProgramations() {
                     onCalendarCreated={fetchCalendars}
                 />
             )}
+=======
+>>>>>>> origin/feature/hernandez
         </div>
     );
 }

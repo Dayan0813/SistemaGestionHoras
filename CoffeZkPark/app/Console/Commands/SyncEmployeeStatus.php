@@ -60,7 +60,10 @@ class SyncEmployeeStatus extends Command
         $inactivos = Employee::whereNotIn('uid', $uidsProcesados)
             ->update(['estado' => 'Inactivo']);
 
+<<<<<<< HEAD
         $this->info("✅ Empleados actualizados: {$actualizados}");
+=======
+>>>>>>> origin/feature/hernandez
         $this->info("🚫 Empleados marcados como Inactivos: {$inactivos}");
 
         return Command::SUCCESS;

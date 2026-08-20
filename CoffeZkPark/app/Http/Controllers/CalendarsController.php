@@ -18,15 +18,16 @@ class CalendarsController extends Controller
                 'hora_entrada',
                 'hora_salida',
                 'shift_type',
+
                 'is_custom',
                 'created_for_employee_uid',
+ origin/feature/hernandez
             ]);
 
         return response()->json($calendars);
     }
 
     /**
-     * ==========================================
      *
      *  Crear un turno/calendario para un area
      *
@@ -124,13 +125,6 @@ class CalendarsController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /**
-     * ==========================================
-     * 
-     *  HELPER PARA VALIDACIONES (MISMA LÓGICA)
-     * 
-     * ==========================================
-     */
     protected function ensureAreaAcces(int $areaId): void
     {
         $user = auth()->user();

@@ -178,10 +178,13 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
 
     Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
 
+<<<<<<< HEAD
     Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');
 
     Route::patch('/programations/{programation}/cancel', [ProgramationsController::class, 'cancel'])->name('programations.cancel');
 
+=======
+>>>>>>> origin/feature/hernandez
     //Programaciones por area (Solo la asignada)
     Route::get(
         '/programations/areas/{area}',
@@ -208,6 +211,7 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
         [ProgramationsController::class, 'saveOverride']
     )->name('programations.override.save');
 
+<<<<<<< HEAD
     // Aplicar un turno a dias puntuales para toda el area
     Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
 
@@ -218,6 +222,11 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
     Route::put('/calendars/{calendar}', [CalendarsController::class, 'update'])->name('calendars.update');
     Route::delete('/calendars/{calendar}', [CalendarsController::class, 'destroy'])->name('calendars.destroy');
 
+=======
+    // Endpoint para obtener calendarios por area
+    Route::get('/calendars/area/{areaId}', [CalendarsController::class, 'byArea'])->name('calendars.byArea');
+
+>>>>>>> origin/feature/hernandez
     // Endpoint para el componente de Areas
     Route::get('/areas', [AreaController::class, 'index'])->name('areas');
     Route::get('/areas/{area}', [AreaController::class, 'show'])->name('areas.show');
