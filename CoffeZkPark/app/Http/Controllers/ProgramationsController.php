@@ -121,7 +121,6 @@ class ProgramationsController extends Controller
 
     /**
      * ===========================================
-<<<<<<< HEAD
      *
      *  Aplicar un turno como excepcion a uno o varios
      *  dias puntuales, para todos los empleados del
@@ -182,11 +181,6 @@ class ProgramationsController extends Controller
      *
      *  Retorno de los valores dinamicos para el detalle
      *
-=======
-     * 
-     *  Retorno de los valores dinamicos para el detalle
-     * 
->>>>>>> origin/feature/hernandez
      * ===========================================
      */
 
@@ -317,16 +311,10 @@ class ProgramationsController extends Controller
     }
 
     /**
-<<<<<<< HEAD
-     * ============================
-     *
-     *  Almacenamiento de la programacion
-     *
-=======
      * ===========================================
-     * 
+     *
      *  Filtro de empleados por Area
-     * 
+     *
      * ===========================================
      */
 
@@ -340,10 +328,9 @@ class ProgramationsController extends Controller
 
     /**
      * ============================
-     * 
+     *
      *  Almacenamiento de la programacion
-     * 
->>>>>>> origin/feature/hernandez
+     *
      * ============================
      */
 
@@ -428,21 +415,9 @@ class ProgramationsController extends Controller
                     ->firstOrFail();
             }
 
-<<<<<<< HEAD
             // 5️ Evitar solapamientos (ignorando programaciones ya canceladas)
             if ($this->hasOverlap($employeeUid, $startDate, $endDate)) {
-=======
-            // 5️ Evitar solapamientos
-            $exists = Programations::where('employee_uid', $employeeUid)
-                ->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('start_date', [$startDate, $endDate])
-                        ->orWhereBetween('end_date', [$startDate, $endDate]);
-                })
-                ->exists();
-
-            if ($exists) {
->>>>>>> origin/feature/hernandez
-                continue;
+           continue;
             }
 
             // 6️⃣ Crear programación CORRECTA
@@ -466,7 +441,6 @@ class ProgramationsController extends Controller
     }
 
     /**
-<<<<<<< HEAD
      * ===========================================
      *
      *  Editar una programación existente
@@ -564,12 +538,6 @@ class ProgramationsController extends Controller
      *
      * Filtro de empleados + contrato
      *
-=======
-     * ============================
-     * 
-     * Filtro de empleados + contrato
-     * 
->>>>>>> origin/feature/hernandez
      * ============================
      */
 

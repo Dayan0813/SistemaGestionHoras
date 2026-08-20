@@ -12,15 +12,10 @@ class ScheduleResolver
     {
         $programation = Programations::with('calendar')
             ->where('employee_uid', $employeeUid)
-<<<<<<< HEAD
             ->where('status', '!=', 'Cancelado')
             ->where('start_date', '<=', $date)
             ->where('end_date', '>=', $date)
             ->orderByDesc('id')
-=======
-            ->where('start_date', '<=', $date)
-            ->where('end_date', '>=', $date)
->>>>>>> origin/feature/hernandez
             ->first();
 
         // Si no hay programacion activa -> No hay Turnno

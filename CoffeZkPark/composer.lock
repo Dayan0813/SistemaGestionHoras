@@ -4,11 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-<<<<<<< HEAD
     "content-hash": "f800aa721966979a7c02e02d959c5dc3",
-=======
-    "content-hash": "3458eccea08a914bfcb88bb707933171",
->>>>>>> origin/feature/hernandez
     "packages": [
         {
             "name": "brick/math",
@@ -140,7 +136,6 @@
             "time": "2024-02-09T16:56:22+00:00"
         },
         {
-<<<<<<< HEAD
             "name": "coding-libs/zkteco-php",
             "version": "v0.0.35",
             "source": {
@@ -201,8 +196,6 @@
             "time": "2026-05-05T05:09:40+00:00"
         },
         {
-=======
->>>>>>> origin/feature/hernandez
             "name": "composer/pcre",
             "version": "3.3.2",
             "source": {

@@ -22,11 +22,8 @@ interface Calendar {
     hora_entrada: string;
     hora_salida: string;
     shift_type: 'D' | 'N';
-<<<<<<< HEAD
     is_custom: boolean;
     created_for_employee_uid: string | null;
-=======
->>>>>>> origin/feature/hernandez
 }
 
 interface WorkPosition {
@@ -64,7 +61,6 @@ export default function IndividualPModal({ employeeId, defaultData, onClose, onS
         setLoadingCalendars(true);
         axios
             .get(`/calendars/area/${areaId}`)
-<<<<<<< HEAD
             .then((res) => {
                 // Catálogo general + turnos personalizados de este empleado (no los de otros)
                 const employeeUid = String(employeeId);
@@ -72,11 +68,6 @@ export default function IndividualPModal({ employeeId, defaultData, onClose, onS
             })
             .finally(() => setLoadingCalendars(false));
     }, [areaId, employeeId]);
-=======
-            .then((res) => setCalendars(res.data))
-            .finally(() => setLoadingCalendars(false));
-    }, [areaId]);
->>>>>>> origin/feature/hernandez
 
     // Puestos por area
 
@@ -140,12 +131,7 @@ export default function IndividualPModal({ employeeId, defaultData, onClose, onS
                             </option>
                             {calendars.map((cal) => (
                                 <option key={cal.id} value={cal.id}>
-<<<<<<< HEAD
                                     {cal.shift_type} ({cal.hora_entrada} {cal.hora_salida}){cal.is_custom ? ' (personalizado)' : ''}
-=======
-                                    {cal.shift_type} ({cal.hora_entrada} {' '}
-                                    {cal.hora_salida})
->>>>>>> origin/feature/hernandez
                                 </option>
                             ))}
                         </select>

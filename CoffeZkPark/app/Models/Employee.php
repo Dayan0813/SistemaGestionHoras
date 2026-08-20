@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Model;
 class Employee extends Model
 {
     protected $fillable = [
-<<<<<<< HEAD
         'uid',
         'userid',
         'name',
@@ -22,25 +21,8 @@ class Employee extends Model
         'dependencia',
         'centrocosto',
         'area_id',
-        'contrato_id'
+        'contrato_id',
     ];
-=======
-    'uid',
-    'userid',
-    'name',
-    'cardno',
-    'estado',
-    'documentos',
-    'dispositivo',
-    'horario',
-    'empresa',
-    'cargo_id',
-    'dependencia',
-    'centrocosto',
-    'area_id',
-    'contrato_id',
-];
->>>>>>> origin/feature/hernandez
 
 
     // Relaciones

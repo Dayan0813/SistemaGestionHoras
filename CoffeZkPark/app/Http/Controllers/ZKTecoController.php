@@ -17,13 +17,8 @@ class ZKTecoController extends Controller
             '192.168.0.204',
             '192.168.0.254',
             '192.168.0.206',
-<<<<<<< HEAD
             '192.168.0.202',
-            '192.168.0.248'
-
-            '192.168.0.202'
-
-        ];
+            '192.168.0.248', ];
         $puerto = 4370; // Puerto estándar de ZKTeco
 
         $output = [];
