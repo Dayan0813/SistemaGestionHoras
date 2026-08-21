@@ -1,4 +1,7 @@
-import { Link } from "@inertiajs/react";
+import { Link, usePage } from "@inertiajs/react";
+import { Plus } from "lucide-react";
+import { useState } from "react";
+import CreateAreaModal from "./CreateAreaModal";
 
 /* =========================
    TIPOS LOCALES
@@ -23,9 +26,25 @@ interface Props {
 ========================= */
 
 export default function Index({ areas }: Props) {
+    const [showCreate, setShowCreate] = useState(false);
+    const { flash } = usePage().props as unknown as { flash?: { success?: string } };
+
     return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 m-12">
-            {areas.map((area) => (
+        <div className="m-12">
+            <div className="mb-6 flex items-center justify-between">
+                <h1 className="text-2xl font-bold text-gray-900">Áreas</h1>
+                <button
+                    onClick={() => setShowCreate(true)}
+                    className="flex items-center rounded-lg border border-[#95c020] px-4 py-2 font-bold text-[#95c020] hover:bg-[#95c020] hover:text-white"
+                >
+                    <Plus className="mr-2" size={18} /> Nueva Área
+                </button>
+            </div>
+
+            {flash?.success && <div className="mb-6 rounded bg-green-100 p-3 text-green-700">{flash.success}</div>}
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                {areas.map((area) => (
                 <Link
                     key={area.id}
                     href={route("areas.show", area.id)}
@@ -68,7 +87,10 @@ export default function Index({ areas }: Props) {
                         </div>
                     </div>
                 </Link>
-            ))}
+                ))}
+            </div>
+
+            <CreateAreaModal show={showCreate} onClose={() => setShowCreate(false)} />
         </div>
     );
 }

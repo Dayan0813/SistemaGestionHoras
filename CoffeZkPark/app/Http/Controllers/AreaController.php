@@ -53,9 +53,32 @@ class AreaController extends Controller
 
     /**
      * ===============================
-     * 
+     *
+     *  Creacion de una nueva area
+     *
+     * ===============================
+     */
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'nombre' => 'required|string|max:255|unique:areas,nombre',
+            'centro_costo' => 'required|string|max:255|unique:areas,centro_costo',
+            'descripcion' => 'nullable|string|max:1000',
+        ]);
+
+        Area::create($validated);
+
+        return redirect()
+            ->route('areas')
+            ->with('success', '✅ Área creada correctamente');
+    }
+
+    /**
+     * ===============================
+     *
      *  Detalle del render
-     * 
+     *
      * ===============================
      */
 

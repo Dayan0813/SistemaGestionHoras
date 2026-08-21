@@ -9,7 +9,7 @@ export const EmptyProgramations = () => {
 
                     <p className="mt-2 text-gray-500">Try adjusting your search or filters</p>
 
-                    <button onClick={() => (window.location.href = route('programations.view'))} className="mt-6 rounded-md border px-5 py-2">
+                    <button onClick={() => (window.location.href = route('programaciones'))} className="mt-6 rounded-md border px-5 py-2">
                         Clear Filters
                     </button>
                 </div>

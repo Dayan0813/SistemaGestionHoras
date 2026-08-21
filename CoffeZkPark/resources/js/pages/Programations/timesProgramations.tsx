@@ -4,6 +4,7 @@ import 'dayjs/locale/es';
 import { CalendarFold, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import DateGrid from './DateGrid';
+import NewCalendarInline, { emptyNewCalendarForm, type NewCalendarFormData } from './NewCalendarInline';
 
 dayjs.locale('es');
 
@@ -18,6 +19,7 @@ type Calendar = {
     hora_salida: string;
     shift_type: 'D' | 'N';
     is_custom: boolean;
+    created_for_employee_uid?: string | null;
 };
 
 type WorkPosition = {
@@ -63,6 +65,14 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
     const [workDays] = useState<string[]>([]);
     const [excludedDates, setExcludedDates] = useState<string[]>([]);
     const [dayOverrides, setDayOverrides] = useState<Record<string, number>>({});
+
+    // Un turno personalizado necesita un dueño: solo se puede crear con exactamente un empleado seleccionado
+    const employeeUid = employeeIds.length === 1 ? String(employeeIds[0]) : undefined;
+
+    const [creatingCustom, setCreatingCustom] = useState(false);
+    const [newCalForm, setNewCalForm] = useState<NewCalendarFormData>(emptyNewCalendarForm);
+    const [calendarSaving, setCalendarSaving] = useState(false);
+    const [calendarError, setCalendarError] = useState<string | null>(null);
 
     /* =======================
        CALENDARS POR ÁREA
@@ -145,6 +155,39 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
     };
 
     /* =======================
+       TURNO PERSONALIZADO (BASE)
+    ======================= */
+
+    const handleCalendarCreated = (calendar: Calendar) => {
+        setCalendars((prev) => [...prev, calendar]);
+    };
+
+    const saveCustomCalendarBase = async () => {
+        if (!areaId || !employeeUid) return;
+
+        setCalendarSaving(true);
+        setCalendarError(null);
+        try {
+            const res = await axios.post('/calendars', {
+                ...newCalForm,
+                area_id: areaId,
+                is_custom: true,
+                created_for_employee_uid: employeeUid,
+            });
+            const created: Calendar = res.data;
+
+            handleCalendarCreated(created);
+            setCalendarId(created.id);
+            setNewCalForm(emptyNewCalendarForm);
+            setCreatingCustom(false);
+        } catch (err: any) {
+            setCalendarError(err?.response?.data?.message ?? 'No se pudo crear el turno.');
+        } finally {
+            setCalendarSaving(false);
+        }
+    };
+
+    /* =======================
        RENDER
     ======================= */
 
@@ -180,10 +223,26 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
                         <option value="">{loadingCalendars ? 'Cargando...' : 'Seleccione un turno'}</option>
                         {calendars.map((c) => (
                             <option key={c.id} value={c.id}>
-                                {c.shift_type} ({c.hora_entrada} - {c.hora_salida})
+                                {c.shift_type} ({c.hora_entrada} - {c.hora_salida}){c.is_custom ? ' (personalizado)' : ''}
                             </option>
                         ))}
                     </select>
+
+                    {employeeUid &&
+                        (creatingCustom ? (
+                            <NewCalendarInline
+                                form={newCalForm}
+                                setForm={setNewCalForm}
+                                saving={calendarSaving}
+                                error={calendarError}
+                                onCancel={() => setCreatingCustom(false)}
+                                onSave={saveCustomCalendarBase}
+                            />
+                        ) : (
+                            <button type="button" onClick={() => setCreatingCustom(true)} className="mt-1 text-xs font-semibold text-[#a81c24] hover:underline">
+                                + Nuevo turno personalizado
+                            </button>
+                        ))}
                 </div>
 
                 {/* Puesto */}
@@ -211,6 +270,9 @@ export default function TimesProgramations({ areaId, employeeIds, selectedMonth,
                 calendars={calendars}
                 dayOverrides={dayOverrides}
                 onDayOverrideChange={updateDayOverride}
+                areaId={areaId ?? undefined}
+                employeeUid={employeeUid}
+                onCalendarCreated={handleCalendarCreated}
             />
 
             {/* Exclusiones */}

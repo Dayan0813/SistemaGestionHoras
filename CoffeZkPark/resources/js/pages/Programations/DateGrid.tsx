@@ -4,6 +4,7 @@ import 'dayjs/locale/es';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
 import { XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import NewCalendarInline, { emptyNewCalendarForm, type NewCalendarFormData } from './NewCalendarInline';
 
 dayjs.extend(isSameOrBefore);
 dayjs.locale('es');
@@ -26,10 +27,23 @@ type Holiday = {
 
 type Calendar = {
     id: number;
+    area_id: number;
     hora_entrada: string | null;
     hora_salida: string | null;
     shift_type: 'D' | 'N';
     is_custom?: boolean;
+    created_for_employee_uid?: string | null;
+};
+
+/** Forma del turno tal como lo devuelve POST /calendars (siempre con horario definido). */
+type CreatedCalendar = {
+    id: number;
+    area_id: number;
+    hora_entrada: string;
+    hora_salida: string;
+    shift_type: 'D' | 'N';
+    is_custom: boolean;
+    created_for_employee_uid: string | null;
 };
 
 type Props = {
@@ -41,12 +55,23 @@ type Props = {
     dayOverrides?: Record<string, number>;
     /** Se llama al asignar (o quitar, con null) el turno de un día. Habilita el click en los días. */
     onDayOverrideChange?: (date: string, calendarId: number | null) => void;
+    /** Área a la que pertenece el turno a crear. Requerido para poder crear turnos personalizados. */
+    areaId?: number;
+    /** UID del único empleado de este lote. Un turno personalizado necesita un dueño, así que solo se puede crear con exactamente un empleado seleccionado. */
+    employeeUid?: string;
+    /** Se llama cuando se crea un turno personalizado nuevo, para que el padre lo agregue a su lista de turnos. */
+    onCalendarCreated?: (calendar: CreatedCalendar) => void;
 };
 
-export default function DateGrid({ startDate, endDate, calendars, dayOverrides, onDayOverrideChange }: Props) {
+export default function DateGrid({ startDate, endDate, calendars, dayOverrides, onDayOverrideChange, areaId, employeeUid, onCalendarCreated }: Props) {
     const [holidays, setHolidays] = useState<Holiday[]>([]);
     const [loading, setLoading] = useState(false);
     const [activeDay, setActiveDay] = useState<string | null>(null);
+
+    const [creatingCustom, setCreatingCustom] = useState(false);
+    const [newCalForm, setNewCalForm] = useState<NewCalendarFormData>(emptyNewCalendarForm);
+    const [calendarSaving, setCalendarSaving] = useState(false);
+    const [calendarError, setCalendarError] = useState<string | null>(null);
 
     const interactive = !!onDayOverrideChange;
 
@@ -103,6 +128,31 @@ export default function DateGrid({ startDate, endDate, calendars, dayOverrides, 
     const calendarLabel = (cal: Calendar) =>
         `${cal.shift_type} (${cal.hora_entrada?.slice(0, 5) ?? '--:--'} - ${cal.hora_salida?.slice(0, 5) ?? '--:--'})${cal.is_custom ? ' (personalizado)' : ''}`;
 
+    const saveCustomCalendar = async () => {
+        if (!areaId || !employeeUid || !activeDay) return;
+
+        setCalendarSaving(true);
+        setCalendarError(null);
+        try {
+            const res = await axios.post('/calendars', {
+                ...newCalForm,
+                area_id: areaId,
+                is_custom: true,
+                created_for_employee_uid: employeeUid,
+            });
+            const created: CreatedCalendar = res.data;
+
+            onCalendarCreated?.(created);
+            onDayOverrideChange?.(activeDay, created.id);
+            setNewCalForm(emptyNewCalendarForm);
+            setCreatingCustom(false);
+        } catch (err: any) {
+            setCalendarError(err?.response?.data?.message ?? 'No se pudo crear el turno.');
+        } finally {
+            setCalendarSaving(false);
+        }
+    };
+
     if (!showGrid) return null;
 
     return (
@@ -156,28 +206,59 @@ export default function DateGrid({ startDate, endDate, calendars, dayOverrides, 
             )}
 
             {interactive && activeDay && (
-                <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#a81c24] bg-[#fff7f0] p-3 text-sm">
-                    <span className="font-semibold whitespace-nowrap text-gray-700">{parseLocalDate(activeDay).format('DD MMM')}:</span>
+                <div className="mt-3 rounded-lg border border-[#a81c24] bg-[#fff7f0] p-3 text-sm">
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold whitespace-nowrap text-gray-700">{parseLocalDate(activeDay).format('DD MMM')}:</span>
 
-                    <select
-                        className="flex-1 rounded border border-gray-300 px-2 py-1"
-                        value={dayOverrides?.[activeDay] ?? ''}
-                        onChange={(e) => {
-                            const value = e.target.value;
-                            onDayOverrideChange?.(activeDay, value ? Number(value) : null);
-                        }}
-                    >
-                        <option value="">Turno normal (sin cambio)</option>
-                        {calendars?.map((cal) => (
-                            <option key={cal.id} value={cal.id}>
-                                {calendarLabel(cal)}
-                            </option>
-                        ))}
-                    </select>
+                        <select
+                            className="flex-1 rounded border border-gray-300 px-2 py-1"
+                            value={dayOverrides?.[activeDay] ?? ''}
+                            onChange={(e) => {
+                                const value = e.target.value;
+                                onDayOverrideChange?.(activeDay, value ? Number(value) : null);
+                            }}
+                        >
+                            <option value="">Turno normal (sin cambio)</option>
+                            {calendars?.map((cal) => (
+                                <option key={cal.id} value={cal.id}>
+                                    {calendarLabel(cal)}
+                                </option>
+                            ))}
+                        </select>
 
-                    <button type="button" onClick={() => setActiveDay(null)} className="text-gray-400 hover:text-gray-600" title="Cerrar">
-                        <XCircle className="h-4 w-4" />
-                    </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setActiveDay(null);
+                                setCreatingCustom(false);
+                            }}
+                            className="text-gray-400 hover:text-gray-600"
+                            title="Cerrar"
+                        >
+                            <XCircle className="h-4 w-4" />
+                        </button>
+                    </div>
+
+                    {areaId && employeeUid ? (
+                        creatingCustom ? (
+                            <NewCalendarInline
+                                form={newCalForm}
+                                setForm={setNewCalForm}
+                                saving={calendarSaving}
+                                error={calendarError}
+                                onCancel={() => setCreatingCustom(false)}
+                                onSave={saveCustomCalendar}
+                            />
+                        ) : (
+                            <button type="button" onClick={() => setCreatingCustom(true)} className="mt-1 text-xs font-semibold text-[#a81c24] hover:underline">
+                                + Nuevo turno personalizado para este empleado
+                            </button>
+                        )
+                    ) : (
+                        !employeeUid && (
+                            <p className="mt-1 text-xs text-gray-400">Selecciona un solo empleado para poder crear un turno personalizado.</p>
+                        )
+                    )}
                 </div>
             )}
         </div>

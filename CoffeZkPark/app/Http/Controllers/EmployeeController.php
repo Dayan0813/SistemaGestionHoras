@@ -101,22 +101,6 @@ class EmployeeController extends Controller
     }
 
     // =======================
-    // EDIT
-    // =======================
-
-    public function edit($id)
-    {
-        $employee = Employee::with(['area', 'cargo', 'contrato'])->findOrFail($id);
-
-        return Inertia::render('Empleados/Edit', [
-            'employee' => $employee,
-            'areas' => Area::select('nombre', 'id', 'centro_costo')->get(),
-            'cargo' => Cargo::pluck('name', 'id'),
-            'contrato' => Contrato::pluck('name', 'id'),
-        ]);
-    }
-
-    // =======================
     // UPDATE
     // =======================
 

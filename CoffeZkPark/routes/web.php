@@ -91,6 +91,10 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
 
     Route::post('/users', [AuthController::class, 'storeUser'])->name('users.store');
 
+    // Áreas (crear)
+
+    Route::post('/areas', [AreaController::class, 'store'])->name('areas.store');
+
     // Inicio
     Route::get('/', function () {
         return Inertia::render('Inicio', [
@@ -189,7 +193,6 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
     )->name('programations.details');
 
     Route::get('programations/employeesArea', [ProgramationsController::class, 'getEmployeesAreaFiltered']);
-    Route::get('/programations/{programation}/dates', [ProgramationsController::class, 'generateDates'])->name('programations.dates');
     Route::get('/programations/employees', [ProgramationsController::class, 'getEmployeesFiltered'])
         ->name('programations.employees');
 
