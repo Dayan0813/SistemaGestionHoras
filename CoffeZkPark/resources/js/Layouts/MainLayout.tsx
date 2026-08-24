@@ -1,6 +1,6 @@
 import logoWhite from '@/Assets/LogoWhite.png';
 import { Link, usePage } from '@inertiajs/react';
-import { Cog, LogOut, Plus } from 'lucide-react';
+import { Cog, LogOut } from 'lucide-react';
 import React from 'react';
 
 interface MainLayoutProps {
@@ -11,8 +11,13 @@ interface MainLayoutProps {
 export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
     const { auth } = usePage().props as any;
     const roles: string[] = auth?.user?.roles ?? [];
+    const permissions: string[] = auth?.user?.permissions ?? [];
 
     const isAdmin = roles.includes('admin');
+    const canProgram = permissions.includes('programaciones.crear');
+    const canEmployees = permissions.includes('empleados.ver');
+    const canMarkings = permissions.includes('marcaciones.ver');
+    const canCompareAttendance = permissions.includes('marcaciones.ver');
 
     return (
         <div>
@@ -33,18 +38,12 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         <LogOut className="m-1" />
                         <span className="m-1 ml-2 px-1 font-bold">Salir</span>
                     </Link>
-                    {isAdmin && (
+                    {canProgram && (
                         <div className="flex items-center justify-center rounded-sm border border-white px-3 text-center text-white hover:bg-white hover:text-[#a81c24]">
                             <Cog className="m-1" />
                             <button className="m-1 ml-2 px-1 font-bold">Configuración</button>
                         </div>
                     )}
-                    <div className="flex items-center justify-center rounded-sm border border-white px-3 text-center text-white hover:bg-white hover:text-[#a81c24]">
-                        <Plus className="m-1" />
-                        <Link href={route('newprogramations')}>
-                            <button className="m-1 ml-2 px-1 font-bold">Nueva Programación</button>
-                        </Link>
-                    </div>
                 </div>
             </div>
 
@@ -64,7 +63,7 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                     </Link>
                 )}
 
-                <Link href={route('programaciones')} className="flex-1">
+                {canProgram && <Link href={route('programaciones')} className="flex-1">
                     <button
                         className={`300ms w-full rounded-lg px-1 py-1 transition-all ${
                             RouteNavbar === 'programaciones'
@@ -74,8 +73,8 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                     >
                         Programación Mensual
                     </button>
-                </Link>
-                <Link href={route('areas')} className="flex-1">
+                </Link>}
+                {canProgram && <Link href={route('areas')} className="flex-1">
                     <button
                         className={`300ms w-full rounded-lg px-1 py-1 transition-all ${
                             RouteNavbar === 'areas'
@@ -85,8 +84,8 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                     >
                         Por Áreas
                     </button>
-                </Link>
-                {isAdmin && (
+                </Link>}
+                {canEmployees && (
                     <Link href={route('empleados')} className="flex-1">
                         <button
                             className={`300ms w-full rounded-lg px-1 py-1 transition-all ${
@@ -99,7 +98,8 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         </button>
                     </Link>
                 )}
-                {isAdmin && (
+                {canMarkings && (
+                    
                     <Link href={route('markinglogs')} className="flex-1">
                         <button
                             className={`w-full rounded-lg px-1 py-1 ${
@@ -112,19 +112,16 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         </button>
                     </Link>
                 )}
-                {isAdmin && (
-                    <Link href={route('servicios')} className="flex-1">
-                        <button
-                            className={`w-full rounded-lg px-1 py-1 ${
-                                RouteNavbar === 'servicios'
-                                    ? 'bg-white font-bold text-[#95c020] shadow-md'
-                                    : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
-                            }`}
-                        >
-                            Servicios
-                        </button>
-                    </Link>
-                )}
+                {canCompareAttendance && <Link href={route('calendario.marcaciones')} className="flex-1">
+                    <button className={`w-full rounded-lg px-1 py-1 ${RouteNavbar === 'calendario-marcaciones' ? 'bg-white font-bold text-[#95c020] shadow-md' : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'}`}>
+                        Calendario vs. Marcaciones
+                    </button>
+                </Link>}
+                {canMarkings && <Link href={route('alertas')} className="flex-1">
+                    <button className={`w-full rounded-lg px-1 py-1 ${RouteNavbar === 'alertas' ? 'bg-white font-bold text-[#95c020] shadow-md' : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'}`}>
+                        Alertas
+                    </button>
+                </Link>}
             </div>
 
             {/* Zona de contenido que cambia */}

@@ -69,6 +69,18 @@ Route::middleware('auth')->get('/dashboard', function () {
         return redirect()->route('programaciones');
     }
 
+    if ($user->hasRole('aux_admin_th')) {
+        return redirect()->route('programaciones');
+    }
+
+    if ($user->hasRole('admin_nomina')) {
+        return redirect()->route('empleados');
+    }
+
+    if ($user->hasRole('aux_th')) {
+        return redirect()->route('programaciones');
+    }
+
     abort(403);
 })->name('dashboard');
 
@@ -85,16 +97,6 @@ Route::middleware('auth')->get('/dashboard', function () {
 
 Route::middleware(['auth', 'role:admin'])->group(function () {
 
-    // Registro de usuarios (Solo un admin puede hacerlo)
-
-    Route::get('/users/create', [AuthController::class, 'createUser'])->name('users.create');
-
-    Route::post('/users', [AuthController::class, 'storeUser'])->name('users.store');
-
-    // Áreas (crear)
-
-    Route::post('/areas', [AreaController::class, 'store'])->name('areas.store');
-
     // Inicio
     Route::get('/', function () {
         return Inertia::render('Inicio', [
@@ -102,48 +104,26 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
         ]);
     })->name('inicio');
 
-    // Empleados
-
-    Route::get('/empleados', [EmployeeController::class, 'index'])->name('empleados');
-    Route::put('/empleados/{employee}', [EmployeeController::class, 'update'])->name('empleados.update');
-    Route::delete('/empleado/{id}', [EmployeeController::class, 'destroy'])->name('empleados.destroy');
-
-    //Servicios
-    Route::get('/Servicios', function () {
-        return Inertia::render('Servicios', [
-            'currentRouteName' => 'servicios',
-        ]);
-    })->name('servicios');
-
-    //Devices
-    Route::resource('devices', DeviceController::class);
-
-    //Marcaciones
-    Route::get('/Markings', function () {
-        return Inertia::render('MarkingsLogs', [
-            'currentRouteName' => 'markingslogs',
-            'devices' => Device::select('id', 'name')->orderBy('name')->get(),
-        ]);
-    })->name('markinglogs');
-
-
-    //Consolidado
-    Route::prefix('WorkConsolidation')->group(function () {
-        Route::get('/consolidations', [WorkConsolidationController::class, 'indexPage'])->name('consolidations.index');
-        Route::get('/{uid}/semanal', [WorkConsolidationController::class, 'weekly']);
-        Route::get('/{uid}/mensual', [WorkConsolidationController::class, 'monthly']);
-        Route::get('/{uid}/rango', [WorkConsolidationController::class, 'range']);
-        Route::get('/generator', [WorkConsolidationController::class, 'generator'])->name('consolidations.generator');
-        Route::post('/generate-bulk', [WorkConsolidationController::class, 'generateBulk'])->name('consolidations.generate');
-    });
-
     Route::get('/holidays/range', [HolidayController::class, 'byRange']);
-
 
     Route::post(
         '/work-consolidation/generate-bulk',
         [WorkConsolidationController::class, 'generateBulk']
     );
+});
+
+Route::middleware(['auth', 'permission:usuarios.gestionar'])->group(function () {
+    // Registro de usuarios (Solo un admin puede hacerlo)
+
+    Route::get('/users/create', [AuthController::class, 'createUser'])->name('users.create');
+
+    Route::post('/users', [AuthController::class, 'storeUser'])->name('users.store');
+});
+
+Route::middleware(['auth', 'permission:areas.gestionar'])->group(function () {
+    // Áreas (crear)
+
+    Route::post('/areas', [AreaController::class, 'store'])->name('areas.store');
 });
 
 Route::get('/marking', [MarkingLogController::class, 'streamGlobal'])
@@ -168,7 +148,7 @@ Route::get('/marking/only/{device}', [MarkingLogController::class, 'streamOnly']
  * ==================================================
  */
 
-Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
+Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () {
 
     // Programaciones vista principal
     Route::get('/programaciones', function () {
@@ -176,15 +156,6 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
             'currentRouteName' => 'programaciones',
         ]);
     })->name('programaciones');
-
-    //Nueva Programacion
-    Route::get('/programations/new', [ProgramationsController::class, 'index'])->name('newprogramations');
-
-    Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
-
-    Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');
-
-    Route::patch('/programations/{programation}/cancel', [ProgramationsController::class, 'cancel'])->name('programations.cancel');
 
     //Programaciones por area (Solo la asignada)
     Route::get(
@@ -204,22 +175,77 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
         '/Programations/area/{area}/month',
         [ProgramationsController::class, 'DinamicDetails']
     )->name('programations.dinamicDetails');
+});
 
-    // Aplicar un turno a dias puntuales para toda el area
-    Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
-
+Route::middleware(['auth', 'permission:calendarios.gestionar'])->group(function () {
     // Endpoint para obtener calendarios por area
     Route::get('/calendars/area/{areaId}', [CalendarsController::class, 'byArea'])->name('calendars.byArea');
 
     Route::post('/calendars', [CalendarsController::class, 'store'])->name('calendars.store');
     Route::put('/calendars/{calendar}', [CalendarsController::class, 'update'])->name('calendars.update');
     Route::delete('/calendars/{calendar}', [CalendarsController::class, 'destroy'])->name('calendars.destroy');
+});
 
+Route::middleware(['auth', 'permission:areas.ver'])->group(function () {
     // Endpoint para el componente de Areas
     Route::get('/areas', [AreaController::class, 'index'])->name('areas');
     Route::get('/areas/{area}', [AreaController::class, 'show'])->name('areas.show');
+});
 
+Route::middleware(['auth', 'permission:work_positions.ver'])->group(function () {
     // WorkPosition
 
     Route::get('/workPositions/area/{areaId}/puestos', [WorkPositionController::class, 'getPositionByArea']);
+});
+
+Route::middleware(['auth', 'permission:programaciones.crear'])->group(function () {
+    Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
+});
+
+Route::middleware(['auth', 'permission:programaciones.editar'])->group(function () {
+    Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');
+    Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
+});
+
+Route::middleware(['auth', 'permission:empleados.ver'])->group(function () {
+    Route::get('/empleados', [EmployeeController::class, 'index'])->name('empleados');
+});
+
+Route::middleware(['auth', 'permission:empleados.editar'])->group(function () {
+    Route::put('/empleados/{employee}', [EmployeeController::class, 'update'])->name('empleados.update');
+});
+
+Route::middleware(['auth', 'permission:empleados.eliminar'])->group(function () {
+    Route::delete('/empleado/{id}', [EmployeeController::class, 'destroy'])->name('empleados.destroy');
+});
+
+Route::middleware(['auth', 'permission:consolidados.ver'])->group(function () {
+    Route::prefix('WorkConsolidation')->group(function () {
+        Route::get('/consolidations', [WorkConsolidationController::class, 'indexPage'])->name('consolidations.index');
+        Route::get('/{uid}/semanal', [WorkConsolidationController::class, 'weekly']);
+        Route::get('/{uid}/mensual', [WorkConsolidationController::class, 'monthly']);
+        Route::get('/{uid}/rango', [WorkConsolidationController::class, 'range']);
+        Route::get('/generator', [WorkConsolidationController::class, 'generator'])->name('consolidations.generator');
+    });
+});
+
+Route::middleware(['auth', 'permission:consolidados.generar'])->group(function () {
+    Route::post('/WorkConsolidation/generate-bulk', [WorkConsolidationController::class, 'generateBulk'])->name('consolidations.generate');
+});
+
+Route::middleware(['auth', 'permission:marcaciones.ver'])->group(function () {
+    Route::get('/Markings', function () {
+        return Inertia::render('MarkingsLogs', [
+            'currentRouteName' => 'markinglogs',
+            'devices' => Device::select('id', 'name')->orderBy('name')->get(),
+        ]);
+    })->name('markinglogs');
+
+    Route::get('/calendario-marcaciones', function () {
+        return Inertia::render('CalendarioVsMarcaciones', ['currentRouteName' => 'calendario-marcaciones']);
+    })->name('calendario.marcaciones');
+
+    Route::get('/alertas', function () {
+        return Inertia::render('Alertas', ['currentRouteName' => 'alertas']);
+    })->name('alertas');
 });

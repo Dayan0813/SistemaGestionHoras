@@ -16,4 +16,16 @@ class UserRole extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function permissions()
+    {
+        return $this->hasManyThrough(
+            Permission::class,
+            RolePermission::class,
+            'role',
+            'id',
+            'role',
+            'permission_id'
+        );
+    }
 }

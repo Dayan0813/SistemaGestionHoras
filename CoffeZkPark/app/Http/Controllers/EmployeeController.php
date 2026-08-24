@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Area;
-use App\Models\Cargo;
-use App\Models\Contrato;
+use App\Models\area as Area;
+use App\Models\cargo as Cargo;
+use App\Models\contrato as Contrato;
 use App\Models\Employee;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -13,7 +13,18 @@ class EmployeeController extends Controller
 {
     public function index(Request $request)
     {
+        $user = auth()->user()->loadMissing('employee');
         $query = Employee::query();
+
+        if ($user->hasRole('coordinator')) {
+            $areaId = $user->employee?->area_id;
+
+            if (!$areaId) {
+                abort(403, 'Usuario sin área asignada');
+            }
+
+            $query->where('area_id', $areaId);
+        }
 
         // =======================
         // FILTROS
@@ -65,11 +76,11 @@ class EmployeeController extends Controller
         // ESTADÍSTICAS
         // =======================
 
-        $totalEmployees = Employee::count();
-        $totalActiveEmployees = Employee::where('estado', 'Activo')->count();
-        $totalInactiveEmployees = Employee::where('estado', 'Inactivo')->count();
+        $totalEmployees = (clone $query)->count();
+        $totalActiveEmployees = (clone $query)->where('estado', 'Activo')->count();
+        $totalInactiveEmployees = (clone $query)->where('estado', 'Inactivo')->count();
 
-        $byContrato = Employee::with('contrato')
+        $byContrato = (clone $query)->with('contrato')
             ->get()
             ->groupBy(fn($e) => $e->contrato?->name ?? 'Sin contrato')
             ->map(fn($group) => $group->count())
@@ -93,7 +104,9 @@ class EmployeeController extends Controller
                 'contrato_id',
                 'search'
             ]),
-            'areas' => Area::select('nombre', 'id', 'centro_costo')->get(),
+            'areas' => $user->hasRole('coordinator')
+                ? Area::where('id', $user->employee->area_id)->select('nombre', 'id', 'centro_costo')->get()
+                : Area::select('nombre', 'id', 'centro_costo')->get(),
             'cargo' => Cargo::pluck('name', 'id'),
             'contrato' => Contrato::pluck('name', 'id'),
             'currentRouteName' => 'empleados',
@@ -106,6 +119,8 @@ class EmployeeController extends Controller
 
     public function update(Request $request, Employee $employee)
     {
+        $this->ensureCoordinatorArea($employee);
+
         $validated = $request->validate([
             'uid' => 'required|string|max:255',
             'userid' => 'nullable|string',
@@ -171,10 +186,25 @@ class EmployeeController extends Controller
 
     public function destroy($id)
     {
-        Employee::findOrFail($id)->delete();
+        $employee = Employee::findOrFail($id);
+        $this->ensureCoordinatorArea($employee);
+        $employee->delete();
 
         return redirect()
             ->route('empleados')
             ->with('success', 'Empleado eliminado correctamente');
+    }
+
+    private function ensureCoordinatorArea(Employee $employee): void
+    {
+        $user = auth()->user()->loadMissing('employee');
+
+        if (!$user->hasRole('coordinator')) {
+            return;
+        }
+
+        if (!$user->employee?->area_id || (int) $user->employee->area_id !== (int) $employee->area_id) {
+            abort(403, 'No puedes gestionar empleados de otra área');
+        }
     }
 }

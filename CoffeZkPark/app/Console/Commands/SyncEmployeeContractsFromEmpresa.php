@@ -4,7 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Models\Employee;
-use App\Models\Contrato;
+use App\Models\contrato as Contrato;
 
 class SyncEmployeeContractsFromEmpresa extends Command
 {

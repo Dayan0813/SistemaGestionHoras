@@ -13,7 +13,7 @@ class MarkingLogController extends Controller
     
     public function streamGlobal()
     {
-        if (!auth()->check() || !auth()->user()->hasRole('admin')) {
+        if (!auth()->check() || !auth()->user()->hasPermission('marcaciones.sincronizar')) {
             abort(403);
         }
 
@@ -581,7 +581,7 @@ class MarkingLogController extends Controller
      */
     public function streamOnly(Device $device)
     {
-        if (!auth()->check() || !auth()->user()->hasRole('admin')) {
+        if (!auth()->check() || !auth()->user()->hasPermission('marcaciones.sincronizar')) {
             abort(403);
         }
 

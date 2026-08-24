@@ -285,6 +285,7 @@ class ProgramationsController extends Controller
             'work_position_id' => 'nullable|exists:work_positions,id',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
+            'duration' => 'nullable|integer|in:7,15,30,60',
             'employees' => 'required|array|min:1',
             'employees.*' => 'string|exists:employees,uid',
             'group_code' => 'nullable|string',
@@ -292,13 +293,33 @@ class ProgramationsController extends Controller
         ]);
 
         // Validacion del area
-        if ($user->hasRole('coordinator')) {
+        if ($user->hasRole('coordinator') || $user->hasRole('aux_admin_th')) {
 
             if (!$user->employee) {
                 abort(403, 'Usuario sin empleado asociado');
             }
 
             $validated['area_id'] = $user->employee->area_id;
+        }
+
+        if (!empty($validated['duration'])) {
+            $expectedEndDate = Carbon::parse($validated['start_date'])
+                ->addDays((int) $validated['duration'] - 1)
+                ->toDateString();
+
+            if ($validated['end_date'] !== $expectedEndDate) {
+                return back()
+                    ->withErrors(['duration' => 'El rango de fechas no coincide con la duración seleccionada.'])
+                    ->withInput();
+            }
+        }
+
+        $employeesOutsideArea = Employee::whereIn('uid', $validated['employees'])
+            ->where('area_id', '!=', $validated['area_id'])
+            ->exists();
+
+        if ($employeesOutsideArea) {
+            abort(403, 'No puedes programar empleados de otra área');
         }
 
         // Turnos específicos por día definidos al crear (aplican a todos los empleados del lote)
@@ -373,7 +394,7 @@ class ProgramationsController extends Controller
 
 
         return redirect()
-            ->route('newprogramations')
+            ->route('programaciones')
             ->with('success', '✅ Programación creada correctamente');
     }
 
@@ -426,23 +447,6 @@ class ProgramationsController extends Controller
         return response()->json(
             $programation->fresh()->load(['calendar', 'area', 'employee'])
         );
-    }
-
-    /**
-     * ===========================================
-     *
-     *  Cancelar (baja lógica) una programación
-     *
-     * ===========================================
-     */
-
-    public function cancel(Programations $programation)
-    {
-        $this->ensureAreaAcces((int) $programation->area_id);
-
-        $programation->update(['status' => 'Cancelado']);
-
-        return response()->json($programation);
     }
 
     /**

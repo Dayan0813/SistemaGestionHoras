@@ -34,6 +34,14 @@ export default function Register() {
 
     const filteredEmployees = employees.filter((emp) => emp.name.toLowerCase().includes(search.toLowerCase()));
 
+    const roleLabels: Record<string, string> = {
+        admin: 'Administrador',
+        coordinator: 'Coordinador',
+        aux_admin_th: 'Aux. TH',
+        admin_nomina: 'Adm. Nómina',
+        aux_th: 'Aux. TH',
+    };
+
     /* =========================
        SUBMIT
     ========================= */
@@ -133,7 +141,7 @@ export default function Register() {
                             <option value="">Seleccione rol</option>
                             {roles.map((role) => (
                                 <option key={role} value={role}>
-                                    {role}
+                                    {roleLabels[role] ?? role}
                                 </option>
                             ))}
                         </select>

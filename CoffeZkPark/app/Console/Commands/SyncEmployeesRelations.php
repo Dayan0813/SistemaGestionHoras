@@ -4,9 +4,9 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Models\Employee;
-use App\Models\Area;
-use App\Models\Cargo;
-use App\Models\Contrato;
+use App\Models\area as Area;
+use App\Models\cargo as Cargo;
+use App\Models\contrato as Contrato;
 
 class SyncEmployeesRelations extends Command
 {

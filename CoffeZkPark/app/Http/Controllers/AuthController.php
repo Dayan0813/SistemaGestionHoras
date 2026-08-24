@@ -68,6 +68,14 @@ class AuthController extends Controller
             return Inertia::location(route('areas.show', $areaId));
         }
 
+        if ($user->hasRole('aux_admin_th') || $user->hasRole('aux_th')) {
+            return Inertia::location(route('programaciones'));
+        }
+
+        if ($user->hasRole('admin_nomina')) {
+            return Inertia::location(route('empleados'));
+        }
+
         // =========================
         // ADMIN → INICIO
         // =========================
@@ -92,7 +100,13 @@ class AuthController extends Controller
 
         return Inertia::render('Auth/Register', [
             'employees' => $employees,
-            'roles' => ['admin', 'coordinator'],
+            'roles' => [
+                'admin',
+                'coordinator',
+                'aux_admin_th',
+                'admin_nomina',
+                'aux_th',
+            ],
         ]);
     }
 
@@ -161,7 +175,16 @@ class AuthController extends Controller
         $validated = $request->validate([
             'email' => ['required', 'email', 'unique:users,email'],
             'password' => ['required', 'min:6'],
-            'role' => ['required', Rule::in(['admin', 'coordinator'])],
+            'role' => [
+                'required',
+                Rule::in([
+                    'admin',
+                    'coordinator',
+                    'aux_admin_th',
+                    'admin_nomina',
+                    'aux_th',
+                ]),
+            ],
             'employee_uid' => [
                 'required',
                 'exists:employees,uid',
