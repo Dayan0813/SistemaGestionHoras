@@ -10,18 +10,26 @@ class ScheduleResolver
 {
     public function getDailySchedule(string $employeeUid, Carbon $date): ?array
     {
+        $isoWeekday = $date->isoWeekday();
+
+        // No filtrar por work_days en SQL: es una columna JSON, y una fila
+        // con work_days=null significa "todos los días del rango" (mismo
+        // criterio que coveredDates() en ProgramationsController y coversDay()
+        // en el frontend). Se trae candidatas por rango de fecha y se filtra
+        // en PHP la primera cuyo patrón de días realmente cubra esta fecha.
         $programation = Programations::with('calendar')
             ->where('employee_uid', $employeeUid)
             ->where('status', '!=', 'Cancelado')
             ->where('start_date', '<=', $date)
             ->where('end_date', '>=', $date)
             ->orderByDesc('id')
-            ->first();
+            ->get()
+            ->first(fn ($p) => empty($p->work_days) || in_array($isoWeekday, $p->work_days, true));
 
         // Si no hay programacion activa -> No hay Turnno
 
         if (!$programation || !$programation->calendar) {
-            return null;    
+            return null;
         }
 
         // Agregamos nueva logica para que lea los overrides diarios
@@ -58,23 +66,5 @@ class ScheduleResolver
             'calendar'        => $calendar,
             'programation'    => $programation,
         ];
-    }
-
-    private function removeAccents(string $string): string
-    {
-        return strtr($string, [
-            'á' => 'a',
-            'é' => 'e',
-            'í' => 'i',
-            'ó' => 'o',
-            'ú' => 'u',
-            'Á' => 'A',
-            'É' => 'E',
-            'Í' => 'I',
-            'Ó' => 'O',
-            'Ú' => 'U',
-            'ñ' => 'n',
-            'Ñ' => 'N',
-        ]);
     }
 }

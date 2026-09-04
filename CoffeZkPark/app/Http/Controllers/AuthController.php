@@ -8,6 +8,7 @@ use App\Models\UserRole;
 use Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Inertia\Inertia;
 use Illuminate\Http\Request;
 
@@ -141,21 +142,32 @@ class AuthController extends Controller
 
         $request->validate([
             'email' => 'required|email|unique:users,email',
-            'password' => 'required|min:6|confirmed',
-            'employee_uid' => 'nullable|exists:employees,uid',
+            'password' => ['required', 'confirmed', Password::min(8)->mixedCase()->numbers()],
+            'employee_uid' => 'required|exists:employees,uid|unique:users,employee_uid',
         ]);
 
-        $user = User::create([
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'employee_uid' => $request->employee_uid ?? null,
-        ]);
+        // Bloqueo para que dos envíos concurrentes antes de que exista
+        // cualquier usuario no puedan volverse ambos admin (TOCTOU entre el
+        // User::count() de arriba y el User::create() de abajo).
+        $user = \Illuminate\Support\Facades\Cache::lock('bootstrap-first-user', 10)->block(5, function () use ($request) {
+            if (User::count() > 0) {
+                abort(403);
+            }
 
-        // PRIMER USUARIO = ADMIN
-        UserRole::create([
-            'user_id' => $user->id,
-            'role' => 'admin',
-        ]);
+            $user = User::create([
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'employee_uid' => $request->employee_uid,
+            ]);
+
+            // PRIMER USUARIO = ADMIN
+            UserRole::create([
+                'user_id' => $user->id,
+                'role' => 'admin',
+            ]);
+
+            return $user;
+        });
 
         Auth::login($user);
 
@@ -174,7 +186,7 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'email' => ['required', 'email', 'unique:users,email'],
-            'password' => ['required', 'min:6'],
+            'password' => ['required', Password::min(8)->mixedCase()->numbers()],
             'role' => [
                 'required',
                 Rule::in([

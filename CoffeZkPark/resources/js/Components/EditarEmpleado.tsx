@@ -1,6 +1,7 @@
 import { router } from '@inertiajs/react';
 import { X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+import CatalogSelectWithAdd from './CatalogSelectWithAdd';
 
 interface EditEmployeeModalProps {
     isOpen: boolean;
@@ -26,10 +27,11 @@ const EditEmployeeModal = ({ isOpen, onClose, employee, areas, cargo, contrato }
         if (isOpen) {
             //Bloquea scroll
             document.body.style.overflow = 'hidden';
-        } else {
-            document.body.style.overflow = 'auto';
+            return () => {
+                document.body.style.overflow = 'auto';
+            };
         }
-    });
+    }, [isOpen]);
 
     //Cerrar modal com X
 
@@ -109,9 +111,9 @@ const EditEmployeeModal = ({ isOpen, onClose, employee, areas, cargo, contrato }
                                 type="text"
                                 name="uid"
                                 value={formData.uid}
-                                onChange={handleChange}
-                                className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
-                                required
+                                readOnly
+                                title="El UID no se puede editar: identifica al empleado en programaciones, marcaciones y su cuenta de acceso."
+                                className="w-full rounded border bg-gray-100 px-3 py-2 text-gray-500"
                             />
                         </div>
 
@@ -216,22 +218,15 @@ const EditEmployeeModal = ({ isOpen, onClose, employee, areas, cargo, contrato }
                         </div>
 
                         {/* Cargo */}
-                        <div>
-                            <label className="block text-sm font-medium">Cargo</label>
-                            <select
-                                name="cargo_id"
-                                value={formData.cargo_id}
-                                onChange={handleChange}
-                                className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
-                            >
-                                <option value="">Seleccione un cargo</option>
-                                {Object.entries(cargo).map(([id, name]) => (
-                                    <option key={id} value={id}>
-                                        {String(name)}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+                        <CatalogSelectWithAdd
+                            label="Cargo"
+                            value={formData.cargo_id}
+                            onChange={(id) => setFormData({ ...formData, cargo_id: id })}
+                            options={cargo}
+                            placeholder="Seleccione un cargo"
+                            storeRouteName="cargos.store"
+                            reloadProp="cargo"
+                        />
 
                         {/* Dependencia */}
                         <div>
@@ -277,22 +272,15 @@ const EditEmployeeModal = ({ isOpen, onClose, employee, areas, cargo, contrato }
                         </div>
 
                         {/* Tipo de contrato */}
-                        <div>
-                            <label className="block text-sm font-medium">Tipo de Contrato</label>
-                            <select
-                                name="contrato_id"
-                                value={formData.contrato_id}
-                                onChange={handleChange}
-                                className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
-                            >
-                                <option value="">Seleccione contrato</option>
-                                {Object.entries(contrato).map(([id, name]) => (
-                                    <option key={id} value={id}>
-                                        {String(name)}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+                        <CatalogSelectWithAdd
+                            label="Tipo de Contrato"
+                            value={formData.contrato_id}
+                            onChange={(id) => setFormData({ ...formData, contrato_id: id })}
+                            options={contrato}
+                            placeholder="Seleccione contrato"
+                            storeRouteName="contratos.store"
+                            reloadProp="contrato"
+                        />
                     </section>
 
                     {/* Botones */}

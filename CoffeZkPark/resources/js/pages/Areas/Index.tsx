@@ -17,28 +17,37 @@ interface Area {
     inactivos: number;
 }
 
+interface EligibleEmployee {
+    uid: string;
+    name: string;
+}
+
 interface Props {
     areas: Area[];
+    eligibleEmployees: EligibleEmployee[];
 }
 
 /* =========================
    COMPONENTE
 ========================= */
 
-export default function Index({ areas }: Props) {
+export default function Index({ areas, eligibleEmployees }: Props) {
     const [showCreate, setShowCreate] = useState(false);
-    const { flash } = usePage().props as unknown as { flash?: { success?: string } };
+    const { flash, auth } = usePage().props as unknown as { flash?: { success?: string }; auth?: { user?: { permissions?: string[] } } };
+    const canManageAreas = auth?.user?.permissions?.includes('areas.gestionar') ?? false;
 
     return (
         <div className="m-12">
             <div className="mb-6 flex items-center justify-between">
                 <h1 className="text-2xl font-bold text-gray-900">Áreas</h1>
-                <button
-                    onClick={() => setShowCreate(true)}
-                    className="flex items-center rounded-lg border border-[#95c020] px-4 py-2 font-bold text-[#95c020] hover:bg-[#95c020] hover:text-white"
-                >
-                    <Plus className="mr-2" size={18} /> Nueva Área
-                </button>
+                {canManageAreas && (
+                    <button
+                        onClick={() => setShowCreate(true)}
+                        className="flex items-center rounded-lg border border-[#95c020] px-4 py-2 font-bold text-[#95c020] hover:bg-[#95c020] hover:text-white"
+                    >
+                        <Plus className="mr-2" size={18} /> Nueva Área
+                    </button>
+                )}
             </div>
 
             {flash?.success && <div className="mb-6 rounded bg-green-100 p-3 text-green-700">{flash.success}</div>}
@@ -90,7 +99,7 @@ export default function Index({ areas }: Props) {
                 ))}
             </div>
 
-            <CreateAreaModal show={showCreate} onClose={() => setShowCreate(false)} />
+            <CreateAreaModal show={showCreate} eligibleEmployees={eligibleEmployees} onClose={() => setShowCreate(false)} />
         </div>
     );
 }

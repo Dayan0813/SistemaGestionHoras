@@ -61,15 +61,17 @@ export default function Register() {
     return (
         <>
             <div className="relative flex min-h-screen items-center justify-center bg-gray-100 p-4">
-                <div className="absolute top-4 left-4 md:top-8 md:left-8">
-                    <Link
-                        href="/Servicios"
-                        className="flex w-fit items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:text-white"
-                    >
-                        <ArrowLeft size={18} />
-                        Volver a Servicios
-                    </Link>
-                </div>
+                {roles.length > 1 && (
+                    <div className="absolute top-4 left-4 md:top-8 md:left-8">
+                        <Link
+                            href={route('servicios')}
+                            className="flex w-fit items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:text-white"
+                        >
+                            <ArrowLeft size={18} />
+                            Volver a Servicios
+                        </Link>
+                    </div>
+                )}
                 <form onSubmit={submit} className="w-full max-w-md rounded bg-white p-6 shadow">
                     <h1 className="mb-4 text-center text-xl font-bold">Registro de Usuario</h1>
 

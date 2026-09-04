@@ -13,6 +13,7 @@ export default function Login() {
 
     const submit = (e: React.FormEvent) => {
         e.preventDefault();
+        if (Loader || processing) return;
 
         // Mostrar loader inmediatamente
         setLoader(true);
@@ -52,7 +53,7 @@ export default function Login() {
                         className="mb-4 w-full rounded border p-2"
                     />
 
-                    <button disabled={processing} className="w-full rounded bg-[#a81c24] py-2 font-bold text-white">
+                    <button disabled={processing || Loader} className="w-full rounded bg-[#a81c24] py-2 font-bold text-white disabled:opacity-60">
                         Entrar
                     </button>
 

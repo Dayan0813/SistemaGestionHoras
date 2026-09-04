@@ -3,10 +3,11 @@ import React, { useState } from 'react';
 import { router, Link } from '@inertiajs/react';
 
 export default function DevicesCreate() {
-    const [values, setValues] = useState({ name: '', ip: '', port: '' });
+    const [values, setValues] = useState({ name: '', ip: '', port: '', state: true });
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setValues({ ...values, [e.target.name]: e.target.value });
+        const { name, value, type, checked } = e.target;
+        setValues({ ...values, [name]: type === 'checkbox' ? checked : value });
     };
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -42,6 +43,12 @@ export default function DevicesCreate() {
                     value={values.port}
                     onChange={handleChange}
                 />
+                <div className="flex items-center gap-2">
+                    <input id="create-device-state" name="state" type="checkbox" checked={values.state} onChange={handleChange} />
+                    <label htmlFor="create-device-state" className="text-sm font-medium">
+                        Dispositivo activo
+                    </label>
+                </div>
                 <div className="flex space-x-2">
                     <button
                         type="submit"

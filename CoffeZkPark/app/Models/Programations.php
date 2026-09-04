@@ -21,13 +21,13 @@ class Programations extends Model
         'end_date',
         'status',
         'group_code',
+        'work_days',
     ];
 
     protected $casts = [
         'start_date' => 'date',
         'end_date' => 'date',
         'work_days' => 'array',
-        'excluded_dates' => 'array',
     ];
 
     // Relacion empleados

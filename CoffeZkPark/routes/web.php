@@ -3,10 +3,12 @@
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CalendarsController;
+use App\Models\area;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use App\Http\Controllers\DeviceController;
+use App\Http\Controllers\EmployeeCatalogsController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\MarkingLogController;
@@ -29,7 +31,7 @@ Route::get('/login', [AuthController::class, 'loginForm'])
     ->middleware('guest');
 
 Route::post('/login', [AuthController::class, 'login'])
-    ->middleware('guest');
+    ->middleware(['guest', 'throttle:6,1']);
 
 // Cierra sesion y deshabilita credenciales
 Route::post('logout', function () {
@@ -95,21 +97,28 @@ Route::middleware('auth')->get('/dashboard', function () {
  * ====================================================
  */
 
+// Inicio: solo el admin ve el dashboard general; el resto de roles autenticados
+// se redirige a su página correspondiente (misma lógica que /dashboard) en vez
+// de recibir un 403 al entrar a la URL base del sitio.
+Route::middleware('auth')->get('/', function () {
+    if (!auth()->user()->hasRole('admin')) {
+        return redirect()->route('dashboard');
+    }
+
+    return Inertia::render('Inicio', [
+        'currentRouteName' => 'inicio',
+    ]);
+})->name('inicio');
+
 Route::middleware(['auth', 'role:admin'])->group(function () {
-
-    // Inicio
-    Route::get('/', function () {
-        return Inertia::render('Inicio', [
-            'currentRouteName' => 'inicio',
-        ]);
-    })->name('inicio');
-
     Route::get('/holidays/range', [HolidayController::class, 'byRange']);
 
-    Route::post(
-        '/work-consolidation/generate-bulk',
-        [WorkConsolidationController::class, 'generateBulk']
-    );
+    // Servicios: menú de accesos rápidos para el admin (Dispositivos,
+    // Consolidados, Crear Usuario). Varias páginas ya enlazaban aquí con una
+    // URL fija ("/Servicios") pero nunca existió la ruta.
+    Route::get('/Servicios', function () {
+        return Inertia::render('Servicios', ['currentRouteName' => 'servicios']);
+    })->name('servicios');
 });
 
 Route::middleware(['auth', 'permission:usuarios.gestionar'])->group(function () {
@@ -121,22 +130,29 @@ Route::middleware(['auth', 'permission:usuarios.gestionar'])->group(function () 
 });
 
 Route::middleware(['auth', 'permission:areas.gestionar'])->group(function () {
-    // Áreas (crear)
+    // Áreas (crear / editar)
 
     Route::post('/areas', [AreaController::class, 'store'])->name('areas.store');
+    Route::put('/areas/{area}', [AreaController::class, 'update'])->name('areas.update');
 });
 
-Route::get('/marking', [MarkingLogController::class, 'streamGlobal'])
-    ->withoutMiddleware([
-        \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
-        \Inertia\Middleware::class,
-    ]);
+// Antes no llevaban 'auth' en absoluto: cualquiera, sin sesión, podía golpear
+// estas URLs y disparar la creación/actualización de empleados y marcaciones
+// (y la conexión en vivo al dispositivo). Se reutiliza el permiso
+// "marcaciones.sincronizar" que ya existía para esta misma acción.
+Route::middleware(['auth', 'permission:marcaciones.sincronizar'])->group(function () {
+    Route::get('/marking', [MarkingLogController::class, 'streamGlobal'])
+        ->withoutMiddleware([
+            \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            \Inertia\Middleware::class,
+        ]);
 
-Route::get('/marking/only/{device}', [MarkingLogController::class, 'streamOnly'])
-    ->withoutMiddleware([
-        \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
-        \Inertia\Middleware::class,
-    ]);
+    Route::get('/marking/only/{device}', [MarkingLogController::class, 'streamOnly'])
+        ->withoutMiddleware([
+            \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            \Inertia\Middleware::class,
+        ]);
+});
 
 /**
  * ================================================
@@ -152,9 +168,18 @@ Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () 
 
     // Programaciones vista principal
     Route::get('/programaciones', function () {
-        return Inertia::render('Programaciones', [
-            'currentRouteName' => 'programaciones',
-        ]);
+        $props = ['currentRouteName' => 'programaciones'];
+
+        // aux_admin_th y aux_th además pueden consultar (solo lectura) lo que
+        // subieron los coordinadores de cualquier área, mediante un filtro de
+        // área. aux_th no tiene permiso para crear/editar, así que en el
+        // frontend eso es lo ÚNICO que ve en esta página.
+        $user = auth()->user();
+        if ($user->hasRole('aux_admin_th') || $user->hasRole('aux_th')) {
+            $props['allAreas'] = area::orderBy('nombre')->get(['id', 'nombre']);
+        }
+
+        return Inertia::render('Programaciones', $props);
     })->name('programaciones');
 
     //Programaciones por area (Solo la asignada)
@@ -175,6 +200,18 @@ Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () 
         '/Programations/area/{area}/month',
         [ProgramationsController::class, 'DinamicDetails']
     )->name('programations.dinamicDetails');
+
+    // Exportar a Excel la programación de un área/mes
+    Route::get(
+        '/Programations/area/{area}/month/export',
+        [ProgramationsController::class, 'exportMonth']
+    )->name('programations.exportMonth');
+
+    // Exportar a Excel la programación de TODAS las áreas (una hoja por área)
+    Route::get(
+        '/Programations/export-all',
+        [ProgramationsController::class, 'exportAllAreas']
+    )->name('programations.exportAllAreas');
 });
 
 Route::middleware(['auth', 'permission:calendarios.gestionar'])->group(function () {
@@ -195,7 +232,14 @@ Route::middleware(['auth', 'permission:areas.ver'])->group(function () {
 Route::middleware(['auth', 'permission:work_positions.ver'])->group(function () {
     // WorkPosition
 
-    Route::get('/workPositions/area/{areaId}/puestos', [WorkPositionController::class, 'getPositionByArea']);
+    Route::get('/workPositions/area/{areaId}/puestos', [WorkPositionController::class, 'getPositionByArea'])
+        ->name('workPositions.byArea');
+});
+
+Route::middleware(['auth', 'permission:work_positions.gestionar'])->group(function () {
+    Route::post('/workPositions', [WorkPositionController::class, 'store'])->name('workPositions.store');
+    Route::put('/workPositions/{workPosition}', [WorkPositionController::class, 'update'])->name('workPositions.update');
+    Route::delete('/workPositions/{workPosition}', [WorkPositionController::class, 'destroy'])->name('workPositions.destroy');
 });
 
 Route::middleware(['auth', 'permission:programaciones.crear'])->group(function () {
@@ -211,6 +255,17 @@ Route::middleware(['auth', 'permission:empleados.ver'])->group(function () {
     Route::get('/empleados', [EmployeeController::class, 'index'])->name('empleados');
 });
 
+Route::middleware(['auth', 'permission:empleados.crear'])->group(function () {
+    Route::post('/empleados', [EmployeeController::class, 'store'])->name('empleados.store');
+
+    // Catálogos de Cargo/Contrato: se crean "al vuelo" desde el formulario de
+    // empleado, porque antes no había ninguna forma de agregarlos.
+    Route::post('/cargos', [EmployeeCatalogsController::class, 'storeCargo'])->name('cargos.store');
+    Route::delete('/cargos/{cargo}', [EmployeeCatalogsController::class, 'destroyCargo'])->name('cargos.destroy');
+    Route::post('/contratos', [EmployeeCatalogsController::class, 'storeContrato'])->name('contratos.store');
+    Route::delete('/contratos/{contrato}', [EmployeeCatalogsController::class, 'destroyContrato'])->name('contratos.destroy');
+});
+
 Route::middleware(['auth', 'permission:empleados.editar'])->group(function () {
     Route::put('/empleados/{employee}', [EmployeeController::class, 'update'])->name('empleados.update');
 });
@@ -222,9 +277,9 @@ Route::middleware(['auth', 'permission:empleados.eliminar'])->group(function () 
 Route::middleware(['auth', 'permission:consolidados.ver'])->group(function () {
     Route::prefix('WorkConsolidation')->group(function () {
         Route::get('/consolidations', [WorkConsolidationController::class, 'indexPage'])->name('consolidations.index');
-        Route::get('/{uid}/semanal', [WorkConsolidationController::class, 'weekly']);
-        Route::get('/{uid}/mensual', [WorkConsolidationController::class, 'monthly']);
-        Route::get('/{uid}/rango', [WorkConsolidationController::class, 'range']);
+        Route::get('/{uid}/semanal', [WorkConsolidationController::class, 'weekly'])->name('consolidations.weekly');
+        Route::get('/{uid}/mensual', [WorkConsolidationController::class, 'monthly'])->name('consolidations.monthly');
+        Route::get('/{uid}/rango', [WorkConsolidationController::class, 'range'])->name('consolidations.range');
         Route::get('/generator', [WorkConsolidationController::class, 'generator'])->name('consolidations.generator');
     });
 });
@@ -248,4 +303,12 @@ Route::middleware(['auth', 'permission:marcaciones.ver'])->group(function () {
     Route::get('/alertas', function () {
         return Inertia::render('Alertas', ['currentRouteName' => 'alertas']);
     })->name('alertas');
+});
+
+Route::middleware(['auth', 'permission:dispositivos.gestionar'])->group(function () {
+    Route::get('/devices', [DeviceController::class, 'index'])->name('devices.index');
+    Route::get('/devices/create', [DeviceController::class, 'create'])->name('devices.create');
+    Route::post('/devices', [DeviceController::class, 'store'])->name('devices.store');
+    Route::put('/devices/{device}', [DeviceController::class, 'update'])->name('devices.update');
+    Route::delete('/devices/{device}', [DeviceController::class, 'destroy'])->name('devices.destroy');
 });

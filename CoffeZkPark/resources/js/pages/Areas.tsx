@@ -17,16 +17,23 @@ interface Area {
     inactivos: number;
 }
 
+interface EligibleEmployee {
+    uid: string;
+    name: string;
+}
+
 interface Props {
     currentRouteName: string;
     areas?: Area[];
+    eligibleEmployees?: EligibleEmployee[];
 }
 
-const Areas = ({ currentRouteName, areas }: Props) => {
+const Areas = ({ currentRouteName, areas, eligibleEmployees }: Props) => {
     const safeAreas: Area[] = Array.isArray(areas) ? areas : [];
+    const safeEligibleEmployees: EligibleEmployee[] = Array.isArray(eligibleEmployees) ? eligibleEmployees : [];
     return (
         <div>
-            <Index areas={safeAreas} />
+            <Index areas={safeAreas} eligibleEmployees={safeEligibleEmployees} />
         </div>
     );
 };

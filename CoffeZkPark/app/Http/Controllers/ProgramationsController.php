@@ -2,22 +2,21 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
-use Auth;
 use Illuminate\Http\Request;
 use App\Models\area;
 use App\Models\calendars;
 use App\Models\WorkPosition;
-use App\Models\Contrato as ModelsContrato;
 use App\Models\Employee;
 use App\Models\ProgramationOverride;
 use App\Models\Programations;
+use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use Inertia\Inertia;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class ProgramationsController extends Controller
 {
+    use EnsuresAreaAccess;
 
     /**
      * ============================
@@ -60,19 +59,6 @@ class ProgramationsController extends Controller
 
     /**
      * ===========================================
-     * 
-     *  Render detalle de las cards de programaciones
-     * 
-     * ===========================================
-     */
-
-    public function viewDetails()
-    {
-        return Inertia::render('Programations/DetailsProgramations');
-    }
-
-    /**
-     * ===========================================
      *
      *  Aplicar un turno como excepcion a uno o varios
      *  dias puntuales, para todos los empleados del
@@ -101,11 +87,16 @@ class ProgramationsController extends Controller
         $employeesAfectados = 0;
 
         foreach ($validated['dates'] as $date) {
+            $isoWeekday = Carbon::parse($date)->isoWeekday();
+
+            // Mismo criterio que coveredDates(): una fila con work_days
+            // solo aplica a los días de la semana que realmente incluye.
             $programations = Programations::where('area_id', $validated['area_id'])
                 ->where('status', '!=', 'Cancelado')
                 ->where('start_date', '<=', $date)
                 ->where('end_date', '>=', $date)
-                ->get();
+                ->get()
+                ->filter(fn ($p) => empty($p->work_days) || in_array($isoWeekday, $p->work_days, true));
 
             foreach ($programations as $programation) {
                 ProgramationOverride::updateOrCreate(
@@ -138,133 +129,81 @@ class ProgramationsController extends Controller
 
     public function DinamicDetails(Request $request, int $areaId)
     {
-        $this->ensureAreaAcces($areaId);
+        $this->ensureAreaViewAccess($areaId);
 
         $validated = $request->validate([
             'year' => 'required|integer',
             'month' => 'required|integer|min:1|max:12',
         ]);
 
-        $startOfMonth = Carbon::create(
-            $validated['year'],
-            $validated['month']
-        )->startOfMonth()->toDateString();
-
-        $endOfMonth = Carbon::create(
-            $validated['year'],
-            $validated['month']
-        )->endOfMonth()->toDateString();
-
-        $employees = Employee::query()
-            ->where('area_id', $areaId)
-            ->whereHas('programations', function ($q) use ($startOfMonth, $endOfMonth) {
-                $q->where(function ($query) use ($startOfMonth, $endOfMonth) {
-                    $query->whereBetween('start_date', [$startOfMonth, $endOfMonth])
-                        ->orWhereBetween('end_date', [$startOfMonth, $endOfMonth])
-                        ->orWhere(function ($q) use ($startOfMonth, $endOfMonth) {
-                            $q->where('start_date', '<=', $endOfMonth)
-                                ->where('end_date', '>=', $startOfMonth);
-                        });
-                });
-            })
-            ->with([
-                'programations' => function ($q) use ($startOfMonth, $endOfMonth) {
-                    $q->where(function ($query) use ($startOfMonth, $endOfMonth) {
-                        $query->whereBetween('start_date', [$startOfMonth, $endOfMonth])
-                            ->orWhereBetween('end_date', [$startOfMonth, $endOfMonth])
-                            ->orWhere(function ($q) use ($startOfMonth, $endOfMonth) {
-                                $q->where('start_date', '<=', $endOfMonth)
-                                    ->where('end_date', '>=', $startOfMonth);
-                            });
-                    })
-                        ->with([
-                            'calendar:id,area_id,hora_entrada,hora_salida',
-                            'overrides' => function ($oq) use ($startOfMonth, $endOfMonth) {
-                                $oq->whereBetween('date', [$startOfMonth, $endOfMonth])
-                                    ->with('calendar:id,area_id,hora_entrada,hora_salida');
-                            }
-                        ]);
-                }
-            ])
-            ->orderBy('name')
-            ->get(['uid', 'name']);
+        $employees = \App\Services\AreaScheduleQuery::forMonth($areaId, $validated['year'], $validated['month']);
 
         return response()->json($employees);
     }
 
     /**
      * ===========================================
-     * 
-     *  Retorno del detalle de la creacion de programaciones
-     * 
+     *
+     *  Exportar a Excel la programación de un área/mes
+     *  (mismos datos que DinamicDetails, en formato descargable)
+     *
      * ===========================================
      */
 
-    public function index()
+    public function exportMonth(Request $request, int $areaId)
     {
-        $user = User::with('employee')->findOrFail(Auth::id());
+        $this->ensureAreaViewAccess($areaId);
 
-        // =========================
-        // ÁREAS SEGÚN ROL
-        // =========================
-        $areasQuery = area::query();
-
-        if ($user->hasRole('coordinator')) {
-            if (!$user->employee?->area_id) {
-                abort(403, 'Usuario sin área asignada');
-            }
-
-            $areasQuery->where('id', $user->employee->area_id);
-        }
-
-        $areas = $areasQuery
-            ->orderBy('nombre')
-            ->pluck('nombre', 'id');
-
-        // =========================
-        // RESTO IGUAL
-        // =========================
-        $employees = Employee::all();
-        $calendars = calendars::all();
-        $programations = Programations::with(['employee', 'calendar', 'area'])->get();
-        $contracts = ModelsContrato::orderBy('name')->get(['id', 'name']);
-
-        // Próximos meses
-        $currentMonth = Carbon::now()->startOfMonth();
-        $months = [];
-
-        for ($i = 0; $i < 5; $i++) {
-            $monthDate = $currentMonth->copy()->addMonths($i);
-            $months[] = [
-                'value' => $monthDate->format('Y-m'),
-                'label' => ucfirst($monthDate->locale('es')->translatedFormat('F Y')),
-            ];
-        }
-
-        return Inertia::render('Programations/index', [
-            'areas' => $areas,
-            'employees' => $employees,
-            'calendars' => $calendars,
-            'programations' => $programations,
-            'months' => $months,
-            'contracts' => $contracts,
+        $validated = $request->validate([
+            'year' => 'required|integer',
+            'month' => 'required|integer|min:1|max:12',
         ]);
+
+        $areaModel = area::findOrFail($areaId);
+        $employees = \App\Services\AreaScheduleQuery::forMonth($areaId, $validated['year'], $validated['month']);
+
+        $fileName = sprintf(
+            'programacion-%s-%d-%02d.xlsx',
+            \Illuminate\Support\Str::slug($areaModel->nombre),
+            $validated['year'],
+            $validated['month']
+        );
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new \App\Exports\AreaScheduleExport($employees, (int) $validated['year'], (int) $validated['month'], $areaModel->nombre),
+            $fileName
+        );
     }
 
     /**
      * ===========================================
      *
-     *  Filtro de empleados por Area
+     *  Exportar a Excel la programación de TODAS las áreas
+     *  (una hoja por área en el mismo libro). Solo para roles
+     *  que pueden ver más de un área a la vez.
      *
      * ===========================================
      */
 
-    public function getEmployeeByArea($areaId)
+    public function exportAllAreas(Request $request)
     {
-        $this->ensureAreaAcces((int) $areaId);
+        $user = auth()->user();
 
-        $employees = Employee::where('area_id', $areaId)->get();
-        return response()->json($employees);
+        if (!$user->hasRole('admin') && !$user->hasRole('aux_admin_th') && !$user->hasRole('aux_th')) {
+            abort(403, 'No tienes acceso a la programación de todas las áreas.');
+        }
+
+        $validated = $request->validate([
+            'year' => 'required|integer',
+            'month' => 'required|integer|min:1|max:12',
+        ]);
+
+        $fileName = sprintf('programacion-todas-las-areas-%d-%02d.xlsx', $validated['year'], $validated['month']);
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new \App\Exports\AllAreasScheduleExport((int) $validated['year'], (int) $validated['month']),
+            $fileName
+        );
     }
 
     /**
@@ -290,6 +229,8 @@ class ProgramationsController extends Controller
             'employees.*' => 'string|exists:employees,uid',
             'group_code' => 'nullable|string',
             'day_overrides' => 'nullable|string',
+            'work_days' => 'nullable|array',
+            'work_days.*' => 'integer|between:1,7',
         ]);
 
         // Validacion del area
@@ -299,8 +240,22 @@ class ProgramationsController extends Controller
                 abort(403, 'Usuario sin empleado asociado');
             }
 
+            // Si el empleado del usuario no tiene área, seguir de largo con
+            // area_id = null hace que la validación de "empleados de otra
+            // área" más abajo compare contra NULL y de un 403 con un mensaje
+            // que no tiene que ver con el problema real.
+            if (!$user->employee->area_id) {
+                abort(403, 'Tu usuario no tiene un área asignada. Pide a un administrador que te asigne una antes de programar turnos.');
+            }
+
             $validated['area_id'] = $user->employee->area_id;
         }
+
+        // Cierra el hueco para cualquier otro rol que llegue a tener
+        // "programaciones.crear" en el futuro: sin esto, bastaba con mandar
+        // cualquier area_id (solo se validaba que existiera) para crear
+        // programaciones en un área ajena.
+        $this->ensureAreaAcces((int) $validated['area_id']);
 
         if (!empty($validated['duration'])) {
             $expectedEndDate = Carbon::parse($validated['start_date'])
@@ -314,8 +269,13 @@ class ProgramationsController extends Controller
             }
         }
 
+        // whereNull explícito: "area_id != X" en SQL excluye las filas con
+        // area_id NULL (no es ni verdadero ni falso), así que un empleado sin
+        // área asignada pasaba este chequeo sin querer.
         $employeesOutsideArea = Employee::whereIn('uid', $validated['employees'])
-            ->where('area_id', '!=', $validated['area_id'])
+            ->where(function ($q) use ($validated) {
+                $q->whereNull('area_id')->orWhere('area_id', '!=', $validated['area_id']);
+            })
             ->exists();
 
         if ($employeesOutsideArea) {
@@ -348,6 +308,9 @@ class ProgramationsController extends Controller
 
         //Crear Programaciones
 
+        $skippedEmployees = [];
+        $replacedDaysTotal = 0;
+
         foreach ($validated['employees'] as $employeeUid) {
 
             // 1 Datos base (compartidos por todo el lote)
@@ -355,6 +318,7 @@ class ProgramationsController extends Controller
             $workPositionId = $validated['work_position_id'] ?? null;
             $startDate = $validated['start_date'];
             $endDate = $validated['end_date'];
+            $workDays = $validated['work_days'] ?? null;
 
             // 3 Obtener calendario REAL (DE AQUÍ SALE TYPE)
             $calendar = calendars::where('id', $calendarId)
@@ -368,34 +332,132 @@ class ProgramationsController extends Controller
                     ->firstOrFail();
             }
 
-            // 5 Evitar solapamientos (ignorando programaciones ya canceladas)
-            if ($this->hasOverlap($employeeUid, $startDate, $endDate)) {
-           continue;
+            // 5 Días reales que cubre este lote para este empleado
+            $newDays = $this->coveredDates($startDate, $endDate, $workDays);
+
+            if (empty($newDays)) {
+                $skippedEmployees[] = $employeeUid;
+                continue;
             }
 
-            // 6 Crear programación CORRECTA
-            $newProgramation = Programations::create([
-                'employee_uid' => $employeeUid,
-                'type' => $calendar->shift_type, 
-                'area_id' => $validated['area_id'],
-                'calendar_id' => $calendarId,
-                'work_position_id' => $workPositionId,
-                'start_date' => $startDate,
-                'end_date' => $endDate,
-                'status' => 'Programado',
-                'group_code' => $groupCode,
-            ]);
+            // 6 ¿Alguno de esos días ya estaba cubierto por otra programación
+            // activa del mismo empleado? En vez de rechazar todo el lote por
+            // el choque (como antes), se reemplaza el turno de ESE día
+            // puntual mediante una excepción — el resto del rango de la fila
+            // vieja queda intacto.
+            $existingProgramations = Programations::where('employee_uid', $employeeUid)
+                ->where('status', '!=', 'Cancelado')
+                ->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate])
+                        ->orWhereBetween('end_date', [$startDate, $endDate])
+                        ->orWhere(function ($q2) use ($startDate, $endDate) {
+                            $q2->where('start_date', '<=', $startDate)
+                                ->where('end_date', '>=', $endDate);
+                        });
+                })
+                ->get();
 
-            // 7 Turnos específicos por día (excepciones puntuales definidas al crear)
-            if (!empty($dayOverrides) && is_array($dayOverrides)) {
-                $this->applyDayOverrides($newProgramation, $dayOverrides, $validated['area_id'], $startDate, $endDate);
+            $dayToExistingProgramation = [];
+            foreach ($existingProgramations as $existingProgramation) {
+                $existingDays = $this->coveredDates(
+                    $existingProgramation->start_date->toDateString(),
+                    $existingProgramation->end_date->toDateString(),
+                    $existingProgramation->work_days
+                );
+                foreach ($existingDays as $day) {
+                    if (in_array($day, $newDays, true)) {
+                        $dayToExistingProgramation[$day] = $existingProgramation;
+                    }
+                }
+            }
+
+            // 7 Días que ya estaban cubiertos: reemplazar vía excepción puntual
+            foreach ($dayToExistingProgramation as $day => $existingProgramation) {
+                ProgramationOverride::updateOrCreate(
+                    ['programation_id' => $existingProgramation->id, 'date' => $day],
+                    ['calendar_id' => $calendarId]
+                );
+                $replacedDaysTotal++;
+            }
+
+            // 8 Días frescos (sin choque): crear programación(es) nueva(s),
+            // agrupadas en rangos continuos porque una fila solo admite un
+            // rango simple de start_date/end_date.
+            $freshDays = array_values(array_diff($newDays, array_keys($dayToExistingProgramation)));
+            sort($freshDays);
+
+            foreach ($this->toContiguousDateRanges($freshDays) as $range) {
+                $newProgramation = Programations::create([
+                    'employee_uid' => $employeeUid,
+                    'type' => $calendar->shift_type,
+                    'area_id' => $validated['area_id'],
+                    'calendar_id' => $calendarId,
+                    'work_position_id' => $workPositionId,
+                    'start_date' => $range['start'],
+                    'end_date' => $range['end'],
+                    'status' => 'Programado',
+                    'group_code' => $groupCode,
+                    'work_days' => $workDays,
+                ]);
+
+                // 9 Turnos específicos por día (excepciones puntuales definidas al crear)
+                if (!empty($dayOverrides) && is_array($dayOverrides)) {
+                    $this->applyDayOverrides($newProgramation, $dayOverrides, $validated['area_id'], $range['start'], $range['end']);
+                }
             }
         }
 
 
+        if (!empty($skippedEmployees)) {
+            $skippedNames = Employee::whereIn('uid', $skippedEmployees)->pluck('name')->implode(', ');
+
+            return redirect()
+                ->route('programaciones')
+                ->with('warning', "⚠️ Se omitieron " . count($skippedEmployees) . " empleado(s): el rango de fechas no cubre ningún día real: {$skippedNames}");
+        }
+
+        if ($replacedDaysTotal > 0) {
+            return redirect()
+                ->route('programaciones')
+                ->with('success', "✅ Programación creada correctamente ({$replacedDaysTotal} día(s) reemplazaron una programación existente).");
+        }
+
         return redirect()
             ->route('programaciones')
             ->with('success', '✅ Programación creada correctamente');
+    }
+
+    /**
+     * Agrupa fechas ISO ordenadas en rangos de días calendario consecutivos
+     * (una fila de Programations solo admite un rango simple start/end).
+     */
+    private function toContiguousDateRanges(array $sortedDates): array
+    {
+        if (empty($sortedDates)) {
+            return [];
+        }
+
+        $ranges = [];
+        $start = $sortedDates[0];
+        $prev = $sortedDates[0];
+
+        for ($i = 1; $i < count($sortedDates); $i++) {
+            $current = $sortedDates[$i];
+            $expectedNext = Carbon::parse($prev)->addDay()->toDateString();
+
+            if ($current === $expectedNext) {
+                $prev = $current;
+                continue;
+            }
+
+            $ranges[] = ['start' => $start, 'end' => $prev];
+            $start = $current;
+            $prev = $current;
+        }
+
+        $ranges[] = ['start' => $start, 'end' => $prev];
+
+        return $ranges;
     }
 
     /**
@@ -415,6 +477,8 @@ class ProgramationsController extends Controller
             'work_position_id' => 'nullable|exists:work_positions,id',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
+            'work_days' => 'nullable|array',
+            'work_days.*' => 'integer|between:1,7',
         ]);
 
         // El calendario debe pertenecer al área de la programación
@@ -430,7 +494,7 @@ class ProgramationsController extends Controller
         }
 
         // Evitar solapamientos con OTRAS programaciones activas del mismo empleado
-        if ($this->hasOverlap($programation->employee_uid, $validated['start_date'], $validated['end_date'], $programation->id)) {
+        if ($this->hasOverlap($programation->employee_uid, $validated['start_date'], $validated['end_date'], $programation->id, $validated['work_days'] ?? null)) {
             return response()->json([
                 'message' => 'Ya existe otra programación activa para este empleado que se solapa con ese rango de fechas.',
             ], 422);
@@ -442,6 +506,7 @@ class ProgramationsController extends Controller
             'work_position_id' => $validated['work_position_id'] ?? null,
             'start_date' => $validated['start_date'],
             'end_date' => $validated['end_date'],
+            'work_days' => $validated['work_days'] ?? null,
         ]);
 
         return response()->json(
@@ -458,9 +523,10 @@ class ProgramationsController extends Controller
      * ===========================================
      */
 
-    private function hasOverlap(string $employeeUid, string $startDate, string $endDate, ?int $excludeProgramationId = null): bool
+    private function hasOverlap(string $employeeUid, string $startDate, string $endDate, ?int $excludeProgramationId = null, ?array $workDays = null): bool
     {
-        return Programations::where('employee_uid', $employeeUid)
+        // 1) Candidatas: mismo empleado, mismo rango de fechas tocado (chequeo barato en SQL).
+        $candidates = Programations::where('employee_uid', $employeeUid)
             ->where('status', '!=', 'Cancelado')
             ->when($excludeProgramationId, fn($q) => $q->where('id', '!=', $excludeProgramationId))
             ->where(function ($q) use ($startDate, $endDate) {
@@ -471,7 +537,50 @@ class ProgramationsController extends Controller
                             ->where('end_date', '>=', $endDate);
                     });
             })
-            ->exists();
+            ->get(['id', 'start_date', 'end_date', 'work_days']);
+
+        if ($candidates->isEmpty()) {
+            return false;
+        }
+
+        // 2) Solapamiento real: dos rangos solo chocan si comparten al menos un dia
+        // concreto una vez aplicado el patron de dias laborales de cada uno
+        // (work_days = null equivale a "todos los dias del rango", el comportamiento de antes).
+        $newDays = $this->coveredDates($startDate, $endDate, $workDays);
+
+        foreach ($candidates as $candidate) {
+            $existingDays = $this->coveredDates(
+                $candidate->start_date->toDateString(),
+                $candidate->end_date->toDateString(),
+                $candidate->work_days
+            );
+
+            if (array_intersect($newDays, $existingDays)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Fechas ISO ('YYYY-MM-DD') cubiertas por un rango, respetando work_days
+     * (null o vacio = todos los dias del rango).
+     */
+    private function coveredDates(string $startDate, string $endDate, ?array $workDays): array
+    {
+        $dates = [];
+        $cursor = Carbon::parse($startDate)->startOfDay();
+        $end = Carbon::parse($endDate)->startOfDay();
+
+        while ($cursor->lte($end)) {
+            if (empty($workDays) || in_array($cursor->dayOfWeekIso, $workDays, true)) {
+                $dates[] = $cursor->toDateString();
+            }
+            $cursor->addDay();
+        }
+
+        return $dates;
     }
 
     /**
@@ -602,32 +711,26 @@ class ProgramationsController extends Controller
     }
 
     /**
-     * ==========================================
-     * 
-     *  HELPER PARA VALIDACIONES
-     * 
-     * ===========================================
+     * ==========================================================
+     *
+     *  Acceso de SOLO LECTURA a la programación de un área.
+     *  aux_admin_th y aux_th pueden consultar lo que subieron los
+     *  coordinadores de CUALQUIER área (para el filtro de áreas
+     *  en /programaciones); el resto de roles conserva la
+     *  restricción a su propia área definida en ensureAreaAcces.
+     *
+     * ==========================================================
      */
 
-    public function ensureAreaAcces(int $areaId): void
+    private function ensureAreaViewAccess(int $areaId): void
     {
         $user = auth()->user();
 
-        // Admin puede ver todo
-        if ($user->hasRole('admin')) {
+        if ($user->hasRole('aux_admin_th') || $user->hasRole('aux_th')) {
             return;
         }
 
-        // coordinador SIN empleado -> error
-
-        if (!$user->employee) {
-            abort(403, 'Usuario sin empleado asociado');
-        }
-
-        // Coordinador SOLO su area
-        if ((int) $user->employee->area_id !== (int) $areaId) {
-            abort(403);
-        }
+        $this->ensureAreaAcces($areaId);
     }
 
     /**
@@ -640,10 +743,14 @@ class ProgramationsController extends Controller
 
     public function showByArea(int $area)
     {
-        $this->ensureAreaAcces($area);
+        $this->ensureAreaViewAccess($area);
+
+        $areaModel = area::findOrFail($area);
 
         return Inertia::render('Programations/DetailsProgramations', [
-            'areaId' => $area,
+            'areaId' => $areaModel->id,
+            'areaName' => $areaModel->nombre,
+            'currentRouteName' => 'areas',
         ]);
     }
 }

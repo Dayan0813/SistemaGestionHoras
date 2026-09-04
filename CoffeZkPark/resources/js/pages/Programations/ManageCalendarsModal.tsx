@@ -1,3 +1,4 @@
+import ConfirmModal from '@/Components/confirmModal';
 import axios from 'axios';
 import { CalendarDays, Pencil, Plus, Trash2, XCircle } from 'lucide-react';
 import { useState } from 'react';
@@ -36,6 +37,7 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
 
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
+    const [deletingId, setDeletingId] = useState<number | null>(null);
 
     const startEdit = (cal: Calendar) => {
         setError(null);
@@ -118,15 +120,16 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
         }
     };
 
-    const removeCalendar = async (id: number) => {
-        if (!confirm('¿Eliminar este turno? Solo se puede eliminar si no está siendo usado en ninguna programación.')) {
-            return;
-        }
+    const confirmRemoveCalendar = async () => {
+        if (deletingId === null) return;
+        setError(null);
         try {
-            await axios.delete(`/calendars/${id}`);
+            await axios.delete(`/calendars/${deletingId}`);
             onChanged();
         } catch (err: any) {
-            alert(err?.response?.data?.message ?? 'No se pudo eliminar el turno.');
+            setError(err?.response?.data?.message ?? 'No se pudo eliminar el turno.');
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -161,6 +164,8 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
                     Crear y editar turnos aquí, y aplicarlos a días específicos, afecta a <strong>todos los empleados</strong> del área. Para cambiar
                     el turno de un solo empleado, usa el botón junto a su nombre en la tabla.
                 </p>
+
+                {error && editingId === null && applyingId === null && <p className="mb-3 text-sm text-red-600">{error}</p>}
 
                 {catalogCalendars.length === 0 && !creating && <p className="mb-3 text-sm text-gray-500">Esta área todavía no tiene turnos creados.</p>}
 
@@ -292,7 +297,7 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
                                             <Pencil className="h-4 w-4" />
                                         </button>
                                         <button
-                                            onClick={() => removeCalendar(cal.id)}
+                                            onClick={() => setDeletingId(cal.id)}
                                             title="Eliminar"
                                             className="rounded-md border border-gray-400 p-1.5 text-gray-500 hover:bg-red-600 hover:text-white"
                                         >
@@ -371,6 +376,14 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
                     )}
                 </div>
             </div>
+
+            <ConfirmModal
+                show={deletingId !== null}
+                title="Eliminar turno"
+                message="¿Eliminar este turno? Solo se puede eliminar si no está siendo usado en ninguna programación."
+                onConfirm={confirmRemoveCalendar}
+                onClose={() => setDeletingId(null)}
+            />
         </div>
     );
 }

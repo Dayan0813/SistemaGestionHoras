@@ -38,4 +38,12 @@ class WorkPosition extends Model
     {
         return $this->belongsTo(area::class);
     }
+
+    /**
+     * Programaciones etiquetadas con este puesto de trabajo.
+     */
+    public function programations()
+    {
+        return $this->hasMany(Programations::class, 'work_position_id');
+    }
 }

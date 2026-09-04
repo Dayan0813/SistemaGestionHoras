@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('Programations', function (Blueprint $table) {
+        Schema::table('programations', function (Blueprint $table) {
             //Relacion con Calendarios
             $table->foreignId('calendar_id')
                 ->constrained('calendars')
@@ -26,7 +26,7 @@ return new class extends Migration
     public function down(): void
     {
 
-        Schema::table('Programations', function (Blueprint $table) {
+        Schema::table('programations', function (Blueprint $table) {
 
             // 1. Eliminar la CLAVE FORÁNEA primero
             $table->dropForeign(['calendar_id']);

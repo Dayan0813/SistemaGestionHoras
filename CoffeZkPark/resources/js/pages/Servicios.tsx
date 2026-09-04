@@ -55,8 +55,7 @@ const Servicios = ({ currentRouteName }: CurrentProps) => {
             </div>
         </div>
     );
-};
-
+}; 
 Servicios.layout = (page: React.ReactNode) => <MainLayout RouteNavbar={(page as any).props.currentRouteName}>{page}</MainLayout>;
 
 export default Servicios;

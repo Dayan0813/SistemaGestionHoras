@@ -2,50 +2,125 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use App\Models\WorkPosition;
 use Illuminate\Http\Request;
 
 class WorkPositionController extends Controller
 {
+    use EnsuresAreaAccess;
+
     // Funcion para ubicar puestos de trabajo por area
 
     public function getPositionByArea($areaId)
     {
         $this->ensureAreaAcces($areaId);
 
-        //Buscamos los puestos que pertencen al area y que esten activos
+        // Trae también los inactivos: el frontend los necesita para poder
+        // gestionarlos (editar, reactivar), igual que calendars.byArea.
         $positions = WorkPosition::where('area_id', $areaId)
-            ->where('active', true)
+            ->orderBy('attraction')
             ->orderBy('name')
-            ->get(['id', 'name']);
+            ->get(['id', 'area_id', 'attraction', 'name', 'active']);
 
         return response()->json($positions);
     }
 
     /**
      * ==========================================
-     * 
-     *  HELPER PARA VALIDACIONES (MISMA LÓGICA)
-     * 
+     *
+     *  Crear un puesto de trabajo (atracción + nombre) para un área
+     *
      * ==========================================
      */
-    protected function ensureAreaAcces(int $areaId): void
+    public function store(Request $request)
     {
-        $user = auth()->user();
+        $validated = $request->validate([
+            'area_id' => 'required|integer|exists:areas,id',
+            'attraction' => 'required|string|max:255',
+            'name' => 'required|string|max:255',
+            'active' => 'sometimes|boolean',
+        ]);
 
-        // Admin puede ver todo
-        if ($user->hasRole('admin')) {
-            return;
+        $this->ensureAreaAcces($validated['area_id']);
+
+        $duplicado = WorkPosition::where('area_id', $validated['area_id'])
+            ->where('attraction', $validated['attraction'])
+            ->where('name', $validated['name'])
+            ->exists();
+
+        if ($duplicado) {
+            return response()->json([
+                'message' => 'Ya existe un puesto igual registrado para esta atracción.',
+            ], 422);
         }
 
-        // Coordinator sin empleado → prohibido
-        if (!$user->employee) {
-            abort(403, 'Usuario sin empleado asociado');
-        }
+        $position = WorkPosition::create($validated);
 
-        // Coordinator SOLO su área
-        if ((int) $user->employee->area_id !== (int) $areaId) {
-            abort(403);
-        }
+        return response()->json($position, 201);
     }
+
+    /**
+     * ==========================================
+     *
+     *  Editar un puesto de trabajo existente
+     *
+     * ==========================================
+     */
+    public function update(Request $request, WorkPosition $workPosition)
+    {
+        $this->ensureAreaAcces($workPosition->area_id);
+
+        $validated = $request->validate([
+            'attraction' => 'required|string|max:255',
+            'name' => 'required|string|max:255',
+            'active' => 'sometimes|boolean',
+        ]);
+
+        $duplicado = WorkPosition::where('area_id', $workPosition->area_id)
+            ->where('id', '!=', $workPosition->id)
+            ->where('attraction', $validated['attraction'])
+            ->where('name', $validated['name'])
+            ->exists();
+
+        if ($duplicado) {
+            return response()->json([
+                'message' => 'Ya existe un puesto igual registrado para esta atracción.',
+            ], 422);
+        }
+
+        $workPosition->update($validated);
+
+        return response()->json($workPosition);
+    }
+
+    /**
+     * ==========================================
+     *
+     *  Eliminar un puesto de trabajo
+     *
+     * ==========================================
+     */
+    public function destroy(WorkPosition $workPosition)
+    {
+        $this->ensureAreaAcces($workPosition->area_id);
+
+        if ($workPosition->programations()->exists()) {
+            return response()->json([
+                'message' => 'No se puede eliminar: este puesto está siendo usado en programaciones existentes. Cancélalas o reasígnalas primero.',
+            ], 422);
+        }
+
+        $workPosition->delete();
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * ==========================================
+     *
+     *  HELPER PARA VALIDACIONES (MISMA LÓGICA)
+     *
+     * ==========================================
+     */
 }

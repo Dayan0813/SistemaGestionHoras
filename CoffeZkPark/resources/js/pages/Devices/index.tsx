@@ -10,6 +10,7 @@ interface Device {
     name: string;
     ip: string;
     port: number;
+    state: boolean;
 }
 
 export default function DevicesIndex() {
@@ -45,7 +46,7 @@ export default function DevicesIndex() {
             <h1 className="mb-8 flex items-center justify-center text-2xl font-bold">Dispositivos ZKTeco</h1>
             <div className="m-3 mb-8 flex items-center justify-between">
                 <Link
-                    href="/Servicios"
+                    href={route('servicios')}
                     className="flex items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:font-bold hover:text-white"
                 >
                     <ArrowLeft size={18} />
@@ -70,6 +71,7 @@ export default function DevicesIndex() {
                                 <th className="px-2 py-4 text-center">Nombre</th>
                                 <th className="px-2 py-4 text-center">IP</th>
                                 <th className="px-2 py-4 text-center">Puerto</th>
+                                <th className="px-2 py-4 text-center">Estado</th>
                                 <th className="px-2 py-4 text-center">Acciones</th>
                             </tr>
                         </thead>
@@ -80,6 +82,15 @@ export default function DevicesIndex() {
                                     <td className="px-5 py-5 text-center">{device.name}</td>
                                     <td className="px-5 py-5 text-center font-black">{device.ip}</td>
                                     <td className="px-5 py-5 text-center">{device.port}</td>
+                                    <td className="px-5 py-5 text-center">
+                                        <span
+                                            className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                                                device.state ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                            }`}
+                                        >
+                                            {device.state ? 'Activo' : 'Inactivo'}
+                                        </span>
+                                    </td>
 
                                     <td className="flex items-center justify-center space-x-4 px-4 py-2">
                                         <button

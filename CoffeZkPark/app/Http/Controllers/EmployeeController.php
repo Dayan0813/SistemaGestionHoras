@@ -114,6 +114,79 @@ class EmployeeController extends Controller
     }
 
     // =======================
+    // STORE
+    // =======================
+
+    public function store(Request $request)
+    {
+        $user = auth()->user()->loadMissing('employee');
+
+        $validated = $request->validate([
+            'userid' => 'nullable|string|unique:employees,userid',
+            'name' => 'required|string|max:255',
+            'cardno' => 'nullable|string',
+            'estado' => 'required|string',
+            'documentos' => 'nullable|string',
+            'dispositivo' => 'nullable|string',
+            'horario' => 'nullable|string',
+            'empresa' => 'nullable|string',
+            'cargo_id' => 'nullable|exists:cargo,id',
+            'contrato_id' => 'nullable|exists:contrato,id',
+            'dependencia' => 'nullable|string',
+            'area_id' => 'nullable|exists:areas,id',
+            'centrocosto' => 'nullable|string',
+        ]);
+
+        // Coordinador: solo puede crear empleados en su propia área.
+        if ($user->hasRole('coordinator')) {
+            if (!$user->employee?->area_id) {
+                abort(403, 'Usuario sin área asignada');
+            }
+            $validated['area_id'] = $user->employee->area_id;
+        }
+
+        // Mismo criterio área/cargo/contrato que update()
+        if (!empty($validated['area_id'])) {
+            $area = Area::find($validated['area_id']);
+            $validated['centrocosto'] = $area?->centro_costo;
+        } elseif (!empty($validated['centrocosto'])) {
+            $area = Area::where('centro_costo', $validated['centrocosto'])->first();
+            if ($area) {
+                $validated['area_id'] = $area->id;
+            }
+        }
+
+        if (!empty($validated['cargo_id'])) {
+            $validated['cargo'] = $validated['cargo_id'];
+        }
+
+        if (!empty($validated['contrato_id'])) {
+            $contrato = Contrato::find($validated['contrato_id']);
+            $validated['tipo_contrato'] = $contrato?->name;
+            $validated['empresa'] = $contrato?->id;
+        }
+
+        // El uid es la identidad interna del empleado: la referencian
+        // programaciones, marcaciones y la cuenta de usuario. No se pide en
+        // el formulario, se genera aquí. Si esta persona se enrola más
+        // adelante en el huellero con el mismo "userid", la sincronización
+        // encuentra este mismo registro por userid y lo reutiliza en vez de
+        // crear uno duplicado (el uid del huellero nunca sobreescribe este).
+        do {
+            $uid = 'M' . random_int(100000, 999999);
+        } while (Employee::where('uid', $uid)->exists());
+
+        Employee::create([
+            ...$validated,
+            'uid' => $uid,
+        ]);
+
+        return redirect()
+            ->route('empleados')
+            ->with('success', 'Empleado creado correctamente');
+    }
+
+    // =======================
     // UPDATE
     // =======================
 
@@ -121,8 +194,10 @@ class EmployeeController extends Controller
     {
         $this->ensureCoordinatorArea($employee);
 
+        // uid es intencionalmente NO editable: programaciones, marcaciones y el
+        // usuario de acceso lo referencian como llave foránea; cambiarlo dejaría
+        // huérfanos esos registros.
         $validated = $request->validate([
-            'uid' => 'required|string|max:255',
             'userid' => 'nullable|string',
             'name' => 'required|string|max:255',
             'cardno' => 'nullable|string',
@@ -188,6 +263,24 @@ class EmployeeController extends Controller
     {
         $employee = Employee::findOrFail($id);
         $this->ensureCoordinatorArea($employee);
+
+        // Borrar un empleado elimina en cascada (a nivel de base de datos) su
+        // cuenta de usuario, sus programaciones y sus marcaciones. Si tiene
+        // algo de eso, se bloquea el borrado: para dejar de contar a alguien
+        // que ya no trabaja aquí, se usa el estado "Inactivo", que conserva
+        // el historial en vez de destruirlo.
+        if ($employee->user()->exists()) {
+            return back()->withErrors([
+                'delete' => 'Este empleado tiene una cuenta de acceso al sistema. Elimina o reasigna esa cuenta antes de poder eliminarlo.',
+            ]);
+        }
+
+        if ($employee->programations()->exists() || $employee->markingLogs()->exists()) {
+            return back()->withErrors([
+                'delete' => 'Este empleado tiene programaciones o marcaciones registradas. Márcalo como "Inactivo" para conservar su historial en vez de eliminarlo.',
+            ]);
+        }
+
         $employee->delete();
 
         return redirect()

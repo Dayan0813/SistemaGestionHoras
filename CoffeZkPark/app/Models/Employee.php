@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 
 class Employee extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'uid',
         'userid',
@@ -17,7 +20,9 @@ class Employee extends Model
         'dispositivo',
         'horario',
         'empresa',
+        'cargo',
         'cargo_id',
+        'tipo_contrato',
         'dependencia',
         'centrocosto',
         'area_id',
@@ -60,6 +65,13 @@ class Employee extends Model
     public function workConsolidations()
     {
         return $this->hasMany(WorkConsolidation::class);
+    }
+
+    //
+
+    public function markingLogs()
+    {
+        return $this->hasMany(MarkingLog::class, 'empleado_uid', 'uid');
     }
 
     //

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Device;
 use Illuminate\Http\Request;
 use Jmrashed\Zkteco\Lib\ZKTeco;
 
@@ -12,19 +13,17 @@ class ZKTecoController extends Controller
      */
     public function index()
     {
-        // Lista de IPs de tus dispositivos y el puerto (por defecto es 4370)
-        $ips_dispositivos = [
-            '192.168.0.204',
-            '192.168.0.254',
-            '192.168.0.206',
-            '192.168.0.202',
-            '192.168.0.248', ];
-        $puerto = 4370; // Puerto estándar de ZKTeco
+        // Dispositivos activos registrados en la tabla `devices` (antes era una
+        // lista de IPs fija en el código: agregar/quitar un dispositivo exigía
+        // un despliegue).
+        $devices = Device::where('state', true)->get();
 
         $output = [];
 
-        // Iterar sobre cada IP para intentar la conexión individual
-        foreach ($ips_dispositivos as $ip) {
+        // Iterar sobre cada dispositivo para intentar la conexión individual
+        foreach ($devices as $device) {
+            $ip = $device->ip;
+            $puerto = $device->port ?? 4370;
 
             // 1. Crear una nueva instancia de ZKTeco para el dispositivo actual
             $zk = new ZKTeco($ip, $puerto);

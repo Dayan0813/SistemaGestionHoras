@@ -10,46 +10,56 @@ class DeviceController extends Controller
 {
     public function index()
     {
-        $devices = Device::all();
+        $devices = Device::orderBy('name')->get();
         return Inertia::render('Devices/index', [
-            'devices' => $devices
+            'devices' => $devices,
+            'currentRouteName' => 'devices',
         ]);
     }
 
     public function create()
     {
-        return Inertia::render('Devices/Create');
+        return Inertia::render('Devices/Create', [
+            'currentRouteName' => 'devices',
+        ]);
     }
 
     public function store(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'name' => 'required|string',
             'ip' => 'required|ip',
             'port' => 'required|numeric',
+            'state' => 'nullable|boolean',
         ]);
 
-        Device::create($request->only('name', 'ip', 'port'));
+        Device::create([
+            'name' => $validated['name'],
+            'ip' => $validated['ip'],
+            'port' => $validated['port'],
+            'state' => $validated['state'] ?? true,
+        ]);
 
         return redirect()->route('devices.index')->with('success', 'Dispositivo agregado correctamente.');
     }
 
-    public function edit(Device $device)
-    {
-        return Inertia::render('Devices/Edit', [
-            'device' => $device
-        ]);
-    }
+    // La edición se hace con un modal en Devices/index.tsx, no con una página aparte.
 
     public function update(Request $request, Device $device)
     {
-        $request->validate([
+        $validated = $request->validate([
             'name' => 'required|string',
             'ip' => 'required|ip',
             'port' => 'required|numeric',
+            'state' => 'nullable|boolean',
         ]);
 
-        $device->update($request->only('name', 'ip', 'port'));
+        $device->update([
+            'name' => $validated['name'],
+            'ip' => $validated['ip'],
+            'port' => $validated['port'],
+            'state' => $validated['state'] ?? $device->state,
+        ]);
 
         return redirect()->route('devices.index')->with('success', 'Dispositivo actualizado correctamente.');
     }
@@ -61,3 +71,5 @@ class DeviceController extends Controller
         return redirect()->route('devices.index')->with('success', 'Dispositivo eliminado.');
     }
 }
+ 
+

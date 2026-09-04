@@ -11,8 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('Programations', function (Blueprint $table) {
-            // Nueva columna para frecuencia 
+        Schema::table('programations', function (Blueprint $table) {
+            // Nueva columna para frecuencia
             
             //Columna para agrupar varias Programaciones juntas
             $table->string('group_code')->nullable();
@@ -24,7 +24,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('Programations', function (Blueprint $table) {
+        Schema::table('programations', function (Blueprint $table) {
             $table->dropColumn(['group_code']);
         });
     }

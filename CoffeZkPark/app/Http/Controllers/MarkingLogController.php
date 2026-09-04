@@ -209,7 +209,7 @@ class MarkingLogController extends Controller
 
                                         'cardno' => $cardno,
 
-                                        'estado' => 1,
+                                        'estado' => 'Activo',
 
                                         'dispositivo' => $device->id,
 
@@ -731,7 +731,7 @@ class MarkingLogController extends Controller
                                         'cardno' =>
                                             $cardno,
 
-                                        'estado' => 1,
+                                        'estado' => 'Activo',
 
                                         'dispositivo' =>
                                             $device->id,

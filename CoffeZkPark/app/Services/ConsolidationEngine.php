@@ -11,6 +11,11 @@ class ConsolidationEngine
     protected ScheduleResolver $scheduleResolver;
     protected MarkingResolver  $markingResolver;
 
+    // Evita repetir la misma consulta de festivos para la misma fecha: sin esto,
+    // classifyWork() la dispara una vez por cada minuto trabajado (cientos de
+    // consultas idénticas por turno).
+    protected array $holidayCache = [];
+
     public function __construct(
         ScheduleResolver $scheduleResolver,
         MarkingResolver  $markingResolver,
@@ -42,8 +47,9 @@ class ConsolidationEngine
             // Programación del día
             $schedule = $this->scheduleResolver->getDailySchedule($employeeUid, $date);
 
-            // Jornada real de ese día (entrada/salida)
-            $work = $this->markingResolver->getDailyWork($employeeUid, $date, $schedule);
+            // Sesiones (entrada/salida) realmente trabajadas ese día. Puede
+            // haber más de una (ej. salida a almuerzo y regreso).
+            $sessions = $this->markingResolver->getDailyWork($employeeUid, $date, $schedule);
 
             // Inicializar horas diarias
             $dayHours = [
@@ -58,21 +64,18 @@ class ConsolidationEngine
                 'unplanned'               => 0.0,
             ];
 
-            if ($work) {
+            foreach ($sessions ?? [] as $session) {
                 $this->classifyWork(
                     $schedule,
-                    $work['worked_start'],
-                    $work['worked_end'],
+                    $session['worked_start'],
+                    $session['worked_end'],
                     $dayHours
                 );
             }
 
             $days[$dateKey] = [
                 'scheduled' => $schedule,
-                'sessions'  => $work ? [[
-                    'worked_start' => $work['worked_start'],
-                    'worked_end'   => $work['worked_end'],
-                ]] : [],
+                'sessions'  => $sessions ?? [],
                 'hours'     => $dayHours,
             ];
 
@@ -102,9 +105,11 @@ class ConsolidationEngine
     ): void {
 
         // Si NO hay programación → todo es NO PROGRAMADO
+        // (absolute=true explícito: en Carbon 3 diffInMinutes ya no es
+        // absoluto por defecto, así que sin esto el resultado sale negativo)
 
         if (!$schedule) {
-            $minutes = $salida->diffInMinutes($entrada);
+            $minutes = $entrada->diffInMinutes($salida, true);
             $hours['unplanned'] += $minutes / 60;
             return;
         }
@@ -186,6 +191,12 @@ class ConsolidationEngine
             return true;
         }
 
-        return Holidays::where('date', $date->toDateString())->exists();
+        $key = $date->toDateString();
+
+        if (!array_key_exists($key, $this->holidayCache)) {
+            $this->holidayCache[$key] = Holidays::where('date', $key)->exists();
+        }
+
+        return $this->holidayCache[$key];
     }
 }

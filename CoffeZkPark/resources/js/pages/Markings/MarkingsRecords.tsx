@@ -1,5 +1,5 @@
 import { Logs, RadioReceiver, RefreshCcw } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Device {
     id: number;
@@ -17,13 +17,22 @@ export default function MarkingsRecords({ devices }: { devices: Device[] }) {
     const [deviceId, setDeviceId] = useState<number | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
 
+    // Cierra el stream si el usuario sale de la página con una sincronización
+    // en curso — antes la conexión quedaba abierta indefinidamente.
+    useEffect(() => {
+        return () => {
+            eventSourceRef.current?.close();
+        };
+    }, []);
+
     const startStream = (url: string) => {
         setLogs([]);
 
         eventSourceRef.current?.close();
-        eventSourceRef.current = new EventSource(url);
+        const source = new EventSource(url);
+        eventSourceRef.current = source;
 
-        eventSourceRef.current.addEventListener('log', (e: any) => {
+        source.addEventListener('log', (e: any) => {
             const data = JSON.parse(e.data);
 
             setLogs((prev) => [
@@ -36,9 +45,21 @@ export default function MarkingsRecords({ devices }: { devices: Device[] }) {
             ]);
         });
 
-        eventSourceRef.current.addEventListener('end', () => {
-            eventSourceRef.current?.close();
+        source.addEventListener('end', () => {
+            source.close();
         });
+
+        source.onerror = () => {
+            setLogs((prev) => [
+                {
+                    type: 'error',
+                    message: 'Se perdió la conexión con el servidor de sincronización.',
+                    time: new Date().toLocaleTimeString(),
+                },
+                ...prev,
+            ]);
+            source.close();
+        };
     };
 
     return (

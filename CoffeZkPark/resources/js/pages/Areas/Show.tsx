@@ -1,4 +1,8 @@
-import { Link } from '@inertiajs/react';
+import MainLayout from '@/Layouts/MainLayout';
+import { Link, usePage } from '@inertiajs/react';
+import { CalendarDays, Pencil } from 'lucide-react';
+import React, { useState } from 'react';
+import EditAreaModal from './EditAreaModal';
 
 /* =========================
    TIPOS LOCALES
@@ -9,6 +13,7 @@ interface Area {
     nombre: string;
     descripcion: string | null;
     centro_costo: string;
+    scheduling_mode: 'fijo' | 'variable';
 }
 
 interface Cargo {
@@ -16,13 +21,26 @@ interface Cargo {
     name: string;
 }
 
+interface Contrato {
+    id: number;
+    name: string;
+}
+
+interface TodayCalendar {
+    label: string;
+    hora_entrada: string | null;
+    hora_salida: string | null;
+    shift_type: 'D' | 'N';
+}
+
 interface Employee {
     id: number;
     uid: string;
     name: string;
     estado: 'Activo' | 'Inactivo';
-    empresa?: string;
     cargo?: Cargo | null;
+    contrato?: Contrato | null;
+    today_calendar?: TodayCalendar | null;
 }
 
 interface Stats {
@@ -33,6 +51,7 @@ interface Stats {
 
 interface Props {
     area: Area;
+    coordinator_name: string | null;
     stats: Stats;
     activos: Employee[];
     inactivos: Employee[];
@@ -48,15 +67,30 @@ interface EmployeeCardProps {
 }
 
 function EmployeeCard({ e, active }: EmployeeCardProps) {
+    const today = e.today_calendar;
+    const todayColor = today?.shift_type === 'N' ? 'bg-slate-100 text-slate-700' : 'bg-[#eaf3d3] text-[#5e7a15]';
+
     return (
         <div className="rounded-lg bg-white p-4 shadow">
             <div className="flex items-start justify-between">
                 <div>
                     <p className="font-semibold">{e.name}</p>
 
-                    <p className="text-sm text-gray-500">{e.cargo?.name || 'Sin cargo'}</p>
+                    <p className="flex flex-wrap items-center gap-1.5 text-sm text-gray-500">
+                        {e.cargo?.name || 'Sin cargo'}
+                        <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                today ? todayColor : 'bg-gray-100 text-gray-500'
+                            }`}
+                        >
+                            <CalendarDays size={11} />
+                            {today
+                                ? `${today.label}${today.hora_entrada && today.hora_salida ? ` · ${today.hora_entrada.slice(0, 5)}-${today.hora_salida.slice(0, 5)}` : ''}`
+                                : 'Sin turno hoy'}
+                        </span>
+                    </p>
 
-                    <p className="text-xs text-gray-400">{e.empresa || '—'}</p>
+                    <p className="text-xs text-gray-400">{e.contrato?.name || '—'}</p>
                 </div>
 
                 <span className={`rounded-full px-2 py-1 text-xs ${active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
@@ -67,20 +101,67 @@ function EmployeeCard({ e, active }: EmployeeCardProps) {
     );
 }
 
+
+
 /* =========================
    COMPONENTE PRINCIPAL
 ========================= */
 
-export default function Show({ area, stats, activos, inactivos }: Props) {
+export default function Show({ area, coordinator_name, stats, activos, inactivos }: Props) {
+    const [editing, setEditing] = useState(false);
+    const { auth } = usePage().props as unknown as { auth?: { user?: { permissions?: string[] } } };
+    const canManageAreas = auth?.user?.permissions?.includes('areas.gestionar') ?? false;
+    const canViewProgram = auth?.user?.permissions?.includes('programaciones.ver') ?? false;
+
     return (
         <div className="mx-auto max-w-7xl p-6">
-            <Link href={route('areas')} className="flex w-fit items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:text-white">
-                ← Volver
-            </Link>
+            <div className="flex items-center justify-between">
+                <Link href={route('areas')} className="flex w-fit items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:text-white">
+                    ← Volver
+                </Link>
+
+                <div className="flex items-center gap-3">
+                    {canViewProgram && (
+                        <Link
+                            href={route('programations.details', area.id)}
+                            className="flex items-center gap-2 rounded-lg border border-[#95c020] px-4 py-2 text-sm font-semibold text-[#95c020] hover:bg-[#95c020] hover:text-white"
+                        >
+                            <CalendarDays size={16} /> Ver programación
+                        </Link>
+                    )}
+                    {canManageAreas && (
+                        <button
+                            onClick={() => setEditing(true)}
+                            className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                        >
+                            <Pencil size={16} /> Editar área
+                        </button>
+                    )}
+                </div>
+            </div>
 
             <h1 className="mt-4 text-2xl font-bold">{area.nombre}</h1>
 
             <p className="text-gray-500">{area.descripcion}</p>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span
+                    className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
+                        area.scheduling_mode === 'variable' ? 'bg-blue-100 text-blue-700' : 'bg-[#eaf3d3] text-[#5e7a15]'
+                    }`}
+                >
+                    {area.scheduling_mode === 'variable' ? 'Horario variable (según demanda)' : 'Horario fijo (Lunes a Viernes)'}
+                </span>
+                <span
+                    className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
+                        coordinator_name ? 'bg-gray-100 text-gray-700' : 'bg-red-100 text-red-700'
+                    }`}
+                >
+                    Coordinador: {coordinator_name ?? 'Sin asignar'}
+                </span>
+            </div>
+
+            <EditAreaModal show={editing} area={area} onClose={() => setEditing(false)} />
 
             {/* =====================
                STATS
@@ -126,3 +207,9 @@ export default function Show({ area, stats, activos, inactivos }: Props) {
         </div>
     );
 }
+
+Show.layout = (page: React.ReactNode) => <MainLayout RouteNavbar={(page as any).props.currentRouteName}>{page}</MainLayout>;
+
+
+
+

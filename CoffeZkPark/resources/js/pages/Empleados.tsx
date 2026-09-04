@@ -1,8 +1,10 @@
 import ConfirmModal from '@/Components/confirmModal';
+import CreateEmployeeModal from '@/Components/CreateEmployeeModal';
 import EditEmployeeModal from '@/Components/EditarEmpleado';
+import EmployeeHoursModal from '@/Components/EmployeeHoursModal';
 import MainLayout from '@/Layouts/MainLayout';
 import { router, usePage } from '@inertiajs/react';
-import { ChevronDown, Clock, Funnel, Pencil, Trash2, UserRound } from 'lucide-react';
+import { ChevronDown, Clock, Funnel, Pencil, Plus, Trash2, UserRound } from 'lucide-react';
 import React, { useState } from 'react';
 
 interface CurrentProps {
@@ -11,16 +13,20 @@ interface CurrentProps {
 
 const Empleados = ({ currentRouteName }: CurrentProps) => {
     // 🔧 LÓGICA: ahora cargos y contratos vienen desde BD
-    const { employees, stats, filters, areas, contrato, cargo } = usePage().props as any;
+    const { employees, stats, filters, areas, contrato, cargo, auth } = usePage().props as any;
+    const canCreate = auth?.user?.permissions?.includes('empleados.crear') ?? false;
+    const [isCreateOpen, setIsCreateOpen] = useState(false);
 
     // =========================
     // MODAL CONFIRMAR DELETE
     // =========================
     const [showConfirm, setShowConfrim] = useState<boolean>(false);
     const [employeeDelete, setEmployeeDelete] = useState<number | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const handleDeleteClick = (id: number) => {
         setEmployeeDelete(id);
+        setDeleteError(null);
         setShowConfrim(true);
     };
 
@@ -32,6 +38,10 @@ const Empleados = ({ currentRouteName }: CurrentProps) => {
                     setShowConfrim(false);
                     setEmployeeDelete(null);
                 },
+                onError: (errors) => {
+                    setShowConfrim(false);
+                    setDeleteError((errors as Record<string, string>).delete ?? 'No se pudo eliminar el empleado.');
+                },
             });
         }
     }, [employeeDelete]);
@@ -41,6 +51,7 @@ const Empleados = ({ currentRouteName }: CurrentProps) => {
     // =========================
     const [isOpenModal, setIsOpenModal] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
+    const [hoursEmployee, setHoursEmployee] = useState<{ uid: string; name: string } | null>(null);
 
     const OpenEditModal = (emp: any) => {
         setSelectedEmployee(emp);
@@ -79,10 +90,33 @@ const Empleados = ({ currentRouteName }: CurrentProps) => {
 
     return (
         <div>
+            {deleteError && (
+                <div className="container mx-auto mt-10">
+                    <div className="flex items-start justify-between gap-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+                        <span>{deleteError}</span>
+                        <button onClick={() => setDeleteError(null)} className="font-bold text-red-700 hover:text-red-900">
+                            ×
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            <div className={`container mx-auto flex items-center justify-between ${deleteError ? 'mt-4' : 'mt-10'}`}>
+                <h1 className="text-2xl font-bold text-gray-900">Empleados</h1>
+                {canCreate && (
+                    <button
+                        onClick={() => setIsCreateOpen(true)}
+                        className="flex items-center gap-2 rounded-lg border border-[#95c020] px-4 py-2 font-bold text-[#95c020] hover:bg-[#95c020] hover:text-white"
+                    >
+                        <Plus size={18} /> Nuevo empleado
+                    </button>
+                )}
+            </div>
+
             {/* =========================
                 ESTADÍSTICAS
             ========================= */}
-            <div className="container mx-auto mt-10 mb-8">
+            <div className="container mx-auto mt-4 mb-8">
                 <div className="rounded-xl border border-[#95c020] bg-white p-6 shadow-sm">
                     {/* KPIs */}
                     <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -281,7 +315,10 @@ const Empleados = ({ currentRouteName }: CurrentProps) => {
                                         {emp.estado}
                                     </span>
 
-                                    <button className="flex items-center rounded border border-blue-600 px-3 py-1 text-sm font-semibold text-blue-600 hover:bg-blue-600 hover:text-white">
+                                    <button
+                                        onClick={() => setHoursEmployee({ uid: emp.uid, name: emp.name })}
+                                        className="flex items-center rounded border border-blue-600 px-3 py-1 text-sm font-semibold text-blue-600 hover:bg-blue-600 hover:text-white"
+                                    >
                                         <Clock size={20} className="mr-1" /> Horas
                                     </button>
 
@@ -306,6 +343,37 @@ const Empleados = ({ currentRouteName }: CurrentProps) => {
                     )}
                 </div>
             </div>
+
+            {/* =========================
+                PAGINACIÓN
+            ========================= */}
+            {employees.last_page > 1 && (
+                <div className="container mx-auto mb-10 flex items-center justify-between">
+                    <span className="text-xs text-gray-500">
+                        Mostrando {employees.from}–{employees.to} de {employees.total}
+                    </span>
+                    <div className="flex gap-2">
+                        {employees.links
+                            .filter((link: any) => !isNaN(Number(link.label)))
+                            .map((link: any, index: number) => (
+                                <button
+                                    key={index}
+                                    disabled={!link.url}
+                                    onClick={() => link.url && router.get(link.url, {}, { preserveState: true, preserveScroll: true })}
+                                    className={`flex h-8 w-8 items-center justify-center rounded-md border text-sm transition ${
+                                        link.active ? 'border-[#a81c24] bg-[#a81c24] text-white' : 'bg-white text-gray-600 hover:bg-gray-100'
+                                    } ${!link.url && 'cursor-not-allowed opacity-40'}`}
+                                >
+                                    {link.label}
+                                </button>
+                            ))}
+                    </div>
+                </div>
+            )}
+
+            <EmployeeHoursModal employee={hoursEmployee} onClose={() => setHoursEmployee(null)} />
+
+            <CreateEmployeeModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} areas={areas} contrato={contrato} cargo={cargo} />
 
             {/* MODALES */}
             <EditEmployeeModal

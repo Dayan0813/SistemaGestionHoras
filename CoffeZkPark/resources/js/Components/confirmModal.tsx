@@ -17,17 +17,19 @@ export default function ConfirmModal({
     onClose,
     refreshOnClose = true,
 }: ConfirmModalProps) {
-    if (!show) return null;
-
-    //Efecto para el scroll
-
+    //Efecto para el scroll: debe declararse antes de cualquier "return"
+    //condicional (Reglas de los Hooks) — si no, React lanza un error al
+    //pasar de show=false a show=true en el primer render.
     useEffect(() => {
         if (show) {
             document.body.style.overflow = 'hidden';
-        } else {
-            document.body.style.overflow = 'auto';
+            return () => {
+                document.body.style.overflow = 'auto';
+            };
         }
-    });
+    }, [show]);
+
+    if (!show) return null;
 
     return (
         <div className="fixed inset-0 flex items-center justify-center bg-black/70">

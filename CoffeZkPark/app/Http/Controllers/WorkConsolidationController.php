@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use App\Models\area;
 use App\Models\Employee;
 use App\Models\WorkConsolidation;
@@ -11,6 +12,8 @@ use Illuminate\Http\Request;
 
 class WorkConsolidationController extends Controller
 {
+    use EnsuresAreaAccess;
+
     protected ConsolidationEngine $engine;
 
     // ================================
@@ -26,15 +29,31 @@ class WorkConsolidationController extends Controller
 
     public function indexPage()
     {
+        // Todo el que no sea admin queda limitado a su propia área (mismo
+        // criterio que Programaciones/Calendarios/Puestos): antes esta
+        // pantalla mostraba empleados y consolidados de TODA la empresa.
+        $user = auth()->user();
+        $areaId = $user->hasRole('admin') ? null : $user->employee?->area_id;
+
+        if (!$user->hasRole('admin') && !$areaId) {
+            abort(403, 'Usuario sin empleado asociado');
+        }
+
         $employees = Employee::with('area:id,nombre')
+            ->when($areaId, fn($q) => $q->where('area_id', $areaId))
             ->select('uid', 'name', 'area_id')
             ->orderBy('name')
             ->get();
 
-        $areas = area::select('id', 'nombre')->orderBy('nombre')->get();
+        $areas = area::select('id', 'nombre')
+            ->when($areaId, fn($q) => $q->where('id', $areaId))
+            ->orderBy('nombre')
+            ->get();
 
         // Paginación de consolidaciones
-        $recordsPaginator = WorkConsolidation::orderBy('id', 'desc')->Paginate(10);
+        $recordsPaginator = WorkConsolidation::orderBy('id', 'desc')
+            ->when($areaId, fn($q) => $q->whereHas('employee', fn($eq) => $eq->where('area_id', $areaId)))
+            ->Paginate(10);
 
         // ================================
         // Inicializar acumuladores globales
@@ -97,6 +116,7 @@ class WorkConsolidationController extends Controller
             'areas'            => $areas,
             'consolidado'      => $consolidatedRecords,
             'totales_globales' => $globalTotals, // 👈 sumatorias listas para renderizar
+            'currentRouteName' => 'consolidations',
         ]);
     }
 
@@ -105,20 +125,93 @@ class WorkConsolidationController extends Controller
 
     public function generator()
     {
+        $user = auth()->user();
+        $areaId = $user->hasRole('admin') ? null : $user->employee?->area_id;
+
+        if (!$user->hasRole('admin') && !$areaId) {
+            abort(403, 'Usuario sin empleado asociado');
+        }
+
         $employees = Employee::with('area:id,nombre')
+            ->when($areaId, fn($q) => $q->where('area_id', $areaId))
             ->select('uid', 'name', 'area_id')
             ->orderBy('name')
             ->get();
 
-        $areas = area::select('id', 'nombre')->orderBy('nombre')->get();
+        $areas = area::select('id', 'nombre')
+            ->when($areaId, fn($q) => $q->where('id', $areaId))
+            ->orderBy('nombre')
+            ->get();
 
         return inertia('WorkConsolidation/Generator', [
             'employees' => $employees,
             'areas'     => $areas,
+            'currentRouteName' => 'consolidations',
         ]);
     }
 
-    // Funcion Bulk 
+    /* =======================================================
+     *  CONSOLIDADO DE SOLO LECTURA POR EMPLEADO
+     *  (no persiste nada en work_consolidations; eso lo hace
+     *  generateBulk/generateAndStore bajo el permiso "generar")
+     * ======================================================= */
+
+    // Semana que contiene la fecha indicada (o la semana actual)
+
+    public function weekly(Request $request, string $uid)
+    {
+        $employee = Employee::where('uid', $uid)->firstOrFail();
+        $this->ensureAreaAcces((int) $employee->area_id);
+
+        $validated = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+
+        $anchor = isset($validated['date']) ? Carbon::parse($validated['date']) : Carbon::now();
+        $from = $anchor->copy()->startOfWeek();
+        $to = $anchor->copy()->endOfWeek();
+
+        return response()->json($this->engine->consolidate($uid, $from, $to));
+    }
+
+    // Mes indicado (o el mes actual)
+
+    public function monthly(Request $request, string $uid)
+    {
+        $employee = Employee::where('uid', $uid)->firstOrFail();
+        $this->ensureAreaAcces((int) $employee->area_id);
+
+        $validated = $request->validate([
+            'year' => 'nullable|integer|min:2000|max:2100',
+            'month' => 'nullable|integer|min:1|max:12',
+        ]);
+
+        $anchor = Carbon::create($validated['year'] ?? now()->year, $validated['month'] ?? now()->month, 1);
+        $from = $anchor->copy()->startOfMonth();
+        $to = $anchor->copy()->endOfMonth();
+
+        return response()->json($this->engine->consolidate($uid, $from, $to));
+    }
+
+    // Rango de fechas libre
+
+    public function range(Request $request, string $uid)
+    {
+        $employee = Employee::where('uid', $uid)->firstOrFail();
+        $this->ensureAreaAcces((int) $employee->area_id);
+
+        $validated = $request->validate([
+            'from' => 'required|date',
+            'to' => 'required|date|after_or_equal:from',
+        ]);
+
+        $from = Carbon::parse($validated['from'])->startOfDay();
+        $to = Carbon::parse($validated['to'])->endOfDay();
+
+        return response()->json($this->engine->consolidate($uid, $from, $to));
+    }
+
+    // Funcion Bulk
 
     public function generateBulk(Request $request)
     {
@@ -136,8 +229,24 @@ class WorkConsolidationController extends Controller
         $mode = $validated['mode'];
 
         // ==========================================================
-        // 1. Determinar empleados a procesar según el modo
+        // 1. Validar que el usuario tenga acceso al alcance pedido
+        //    (mismas reglas que Programaciones/Calendarios/Puestos:
+        //    todo el que no sea admin queda limitado a su propia área)
         // ==========================================================
+
+        if ($mode === 'universal' && !auth()->user()->hasRole('admin')) {
+            abort(403, 'Solo un administrador puede generar el consolidado universal.');
+        }
+
+        if ($mode === 'area') {
+            if (!$validated['area_id']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Debe seleccionar un área'
+                ], 422);
+            }
+            $this->ensureAreaAcces((int) $validated['area_id']);
+        }
 
         if ($mode === 'persona') {
             if (!$validated['employee_uid']) {
@@ -146,6 +255,24 @@ class WorkConsolidationController extends Controller
                     'message' => 'Debe seleccionar un empleado'
                 ], 422);
             }
+
+            $targetEmployee = Employee::where('uid', $validated['employee_uid'])->first();
+
+            if (!$targetEmployee) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El empleado seleccionado no existe.'
+                ], 404);
+            }
+
+            $this->ensureAreaAcces((int) $targetEmployee->area_id);
+        }
+
+        // ==========================================================
+        // 2. Determinar empleados a procesar según el modo
+        // ==========================================================
+
+        if ($mode === 'persona') {
             $uids = [$validated['employee_uid']];
         } elseif ($mode === 'area') {
             $uids = Employee::where('area_id', $validated['area_id'])
@@ -163,7 +290,7 @@ class WorkConsolidationController extends Controller
         }
 
         // ==========================================================
-        // 2. Ejecutar tu motor para cada empleado usando generateAndStore()
+        // 3. Ejecutar tu motor para cada empleado usando generateAndStore()
         // ==========================================================
 
         $processed = [];
@@ -176,7 +303,7 @@ class WorkConsolidationController extends Controller
         }
 
         // ==========================================================
-        // 3. Respuesta ligera para el frontend
+        // 4. Respuesta ligera para el frontend
         // ==========================================================
 
         return response()->json([

@@ -53,8 +53,17 @@ class HandleInertiaRequests extends Middleware
                             ->all(),
                         'area_id' => $user->employee?->area_id,
                         'area_name' => $user->employee?->area?->nombre,
+                        'area_scheduling_mode' => $user->employee?->area?->scheduling_mode,
                     ]
                     : null,
+            ],
+            // Sin esto, cada redirect()->with('success'/'warning'/'error', ...)
+            // de los controladores se pierde: Inertia no comparte el flash de
+            // sesión por defecto, hay que exponerlo explícitamente.
+            'flash' => [
+                'success' => fn () => $request->session()->get('success'),
+                'warning' => fn () => $request->session()->get('warning'),
+                'error' => fn () => $request->session()->get('error'),
             ],
         ]);
     }

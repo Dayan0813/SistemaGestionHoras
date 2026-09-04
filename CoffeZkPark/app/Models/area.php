@@ -14,6 +14,7 @@ class area extends Model
         'nombre',
         'centro_costo',
         'descripcion',
+        'scheduling_mode',
     ];
 
     /**

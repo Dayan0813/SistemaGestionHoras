@@ -11,12 +11,14 @@ export default function EditDeviceModal({ show, device, onClose }: EditDeviceMod
     const [name, setName] = useState('');
     const [ip, setIp] = useState('');
     const [port, setPort] = useState('');
+    const [state, setState] = useState(true);
 
     useEffect(() => {
         if (device) {
             setName(device.name || '');
             setIp(device.ip || '');
             setPort(device.port || '');
+            setState(device.state ?? true);
         }
     }, [device]);
 
@@ -24,7 +26,7 @@ export default function EditDeviceModal({ show, device, onClose }: EditDeviceMod
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        router.put(`/devices/${device.id}`, { name, ip, port });
+        router.put(route('devices.update', device.id), { name, ip, port, state });
         onClose();
     };
 
@@ -58,6 +60,13 @@ export default function EditDeviceModal({ show, device, onClose }: EditDeviceMod
                             className="mt-1 w-full rounded border p-2"
                             required
                         />
+                    </div>
+
+                    <div className="mb-4 flex items-center gap-2">
+                        <input id="edit-device-state" type="checkbox" checked={state} onChange={(e) => setState(e.target.checked)} />
+                        <label htmlFor="edit-device-state" className="text-sm font-medium">
+                            Dispositivo activo
+                        </label>
                     </div>
 
                     <div className="flex justify-end space-x-3">

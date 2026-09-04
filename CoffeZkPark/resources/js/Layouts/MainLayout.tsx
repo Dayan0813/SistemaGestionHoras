@@ -1,6 +1,6 @@
 import logoWhite from '@/Assets/LogoWhite.png';
 import { Link, usePage } from '@inertiajs/react';
-import { Cog, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import React from 'react';
 
 interface MainLayoutProps {
@@ -15,9 +15,13 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
 
     const isAdmin = roles.includes('admin');
     const canProgram = permissions.includes('programaciones.crear');
+    // Roles de solo lectura (aux_th) tienen "programaciones.ver" pero no
+    // "programaciones.crear" — sin esto no tenían forma de llegar a ver
+    // programaciones desde el menú.
+    const canViewProgram = permissions.includes('programaciones.ver');
     const canEmployees = permissions.includes('empleados.ver');
     const canMarkings = permissions.includes('marcaciones.ver');
-    const canCompareAttendance = permissions.includes('marcaciones.ver');
+    const canManageDevices = permissions.includes('dispositivos.gestionar');
 
     return (
         <div>
@@ -38,12 +42,6 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         <LogOut className="m-1" />
                         <span className="m-1 ml-2 px-1 font-bold">Salir</span>
                     </Link>
-                    {canProgram && (
-                        <div className="flex items-center justify-center rounded-sm border border-white px-3 text-center text-white hover:bg-white hover:text-[#a81c24]">
-                            <Cog className="m-1" />
-                            <button className="m-1 ml-2 px-1 font-bold">Configuración</button>
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -63,7 +61,21 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                     </Link>
                 )}
 
-                {canProgram && <Link href={route('programaciones')} className="flex-1">
+                {isAdmin && (
+                    <Link href={route('servicios')} className="flex-1">
+                        <button
+                            className={`w-full rounded-lg px-1 py-1 transition-all duration-300 ${
+                                RouteNavbar === 'servicios'
+                                    ? 'bg-white font-bold text-[#95c020] shadow-md'
+                                    : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
+                            }`}
+                        >
+                            Servicios
+                        </button>
+                    </Link>
+                )}
+
+                {canViewProgram && <Link href={route('programaciones')} className="flex-1">
                     <button
                         className={`300ms w-full rounded-lg px-1 py-1 transition-all ${
                             RouteNavbar === 'programaciones'
@@ -71,7 +83,7 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                                 : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
                         }`}
                     >
-                        Programación Mensual
+                        {canProgram ? 'Programación Mensual' : 'Ver Programaciones'}
                     </button>
                 </Link>}
                 {canProgram && <Link href={route('areas')} className="flex-1">
@@ -112,7 +124,7 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         </button>
                     </Link>
                 )}
-                {canCompareAttendance && <Link href={route('calendario.marcaciones')} className="flex-1">
+                {canMarkings && <Link href={route('calendario.marcaciones')} className="flex-1">
                     <button className={`w-full rounded-lg px-1 py-1 ${RouteNavbar === 'calendario-marcaciones' ? 'bg-white font-bold text-[#95c020] shadow-md' : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'}`}>
                         Calendario vs. Marcaciones
                     </button>
@@ -122,6 +134,15 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         Alertas
                     </button>
                 </Link>}
+                {canManageDevices && (
+                    <Link href={route('devices.index')} className="flex-1">
+                        <button
+                            className={`w-full rounded-lg px-1 py-1 ${RouteNavbar === 'devices' ? 'bg-white font-bold text-[#95c020] shadow-md' : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'}`}
+                        >
+                            Dispositivos
+                        </button>
+                    </Link>
+                )}
             </div>
 
             {/* Zona de contenido que cambia */}

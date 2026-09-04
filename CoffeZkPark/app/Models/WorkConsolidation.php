@@ -34,4 +34,9 @@ class WorkConsolidation extends Model
     protected $casts = [
         'daily_breakdown' => 'array'
     ];
+
+    public function employee()
+    {
+        return $this->belongsTo(Employee::class, 'employee_uid', 'uid');
+    }
 }
