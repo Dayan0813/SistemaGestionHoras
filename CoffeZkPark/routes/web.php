@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AreaController;
+use App\Http\Controllers\AlertasController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CalendarsController;
 use App\Models\User;
@@ -223,3 +224,59 @@ Route::middleware(['auth', 'role:admin,coordinator'])->group(function () {
 
     Route::get('/workPositions/area/{areaId}/puestos', [WorkPositionController::class, 'getPositionByArea']);
 });
+
+Route::middleware(['auth', 'permission:programaciones.crear'])->group(function () {
+    Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
+});
+
+Route::middleware(['auth', 'permission:programaciones.editar'])->group(function () {
+    Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');
+    Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
+});
+
+Route::middleware(['auth', 'permission:empleados.ver'])->group(function () {
+    Route::get('/empleados', [EmployeeController::class, 'index'])->name('empleados');
+});
+
+Route::middleware(['auth', 'permission:empleados.editar'])->group(function () {
+    Route::put('/empleados/{employee}', [EmployeeController::class, 'update'])->name('empleados.update');
+});
+
+Route::middleware(['auth', 'permission:empleados.eliminar'])->group(function () {
+    Route::delete('/empleado/{id}', [EmployeeController::class, 'destroy'])->name('empleados.destroy');
+});
+
+Route::middleware(['auth', 'permission:consolidados.ver'])->group(function () {
+    Route::prefix('WorkConsolidation')->group(function () {
+        Route::get('/consolidations', [WorkConsolidationController::class, 'indexPage'])->name('consolidations.index');
+        Route::get('/{uid}/semanal', [WorkConsolidationController::class, 'weekly']);
+        Route::get('/{uid}/mensual', [WorkConsolidationController::class, 'monthly']);
+        Route::get('/{uid}/rango', [WorkConsolidationController::class, 'range']);
+        Route::get('/generator', [WorkConsolidationController::class, 'generator'])->name('consolidations.generator');
+    });
+});
+
+Route::middleware(['auth', 'permission:consolidados.generar'])->group(function () {
+    Route::post('/WorkConsolidation/generate-bulk', [WorkConsolidationController::class, 'generateBulk'])->name('consolidations.generate');
+});
+
+Route::middleware(['auth', 'permission:marcaciones.ver'])->group(function () {
+    Route::get('/Markings', function () {
+        return Inertia::render('MarkingsLogs', [
+            'currentRouteName' => 'markinglogs',
+            'devices' => Device::select('id', 'name')->orderBy('name')->get(),
+        ]);
+    })->name('markinglogs');
+
+    Route::get('/calendario-marcaciones', function () {
+        return Inertia::render('CalendarioVsMarcaciones', ['currentRouteName' => 'calendario-marcaciones']);
+    })->name('calendario.marcaciones');
+
+    Route::get('/alertas', function () {
+        return Inertia::render('Alertas', ['currentRouteName' => 'alertas']);
+    })->name('alertas');
+
+    Route::get('/api/alertas', [AlertasController::class, 'index'])
+        ->name('alertas.data');
+});
+
