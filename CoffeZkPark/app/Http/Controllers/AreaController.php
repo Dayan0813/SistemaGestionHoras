@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use App\Models\area;
 use App\Models\calendars;
+use App\Models\CompanySetting;
 use App\Models\Employee;
 use App\Models\User;
 use App\Models\UserRole;
@@ -62,7 +63,56 @@ class AreaController extends Controller
             'areas' => $areas,
             'eligibleEmployees' => Employee::whereDoesntHave('user')->orderBy('name')->get(['uid', 'name']),
             'currentRouteName' => 'areas',
+            'highSeasonRanges' => CompanySetting::get('high_season_ranges', []),
+            'vacationReminderMonths' => CompanySetting::get('vacation_reminder_months', 3),
         ]);
+    }
+
+    /**
+     * ===============================
+     *
+     *  Rangos de fechas de temporada alta (GLOBAL, para toda la empresa — no por área): dentro
+     *  de esos rangos NO aplica el recorte de horario corto de lunes/martes en áreas de jornada
+     *  fija, política que solo rige en temporada baja. Rangos exactos (no meses completos)
+     *  porque la temporada alta puede empezar/terminar a mitad de mes (ej. "hasta el 18 de
+     *  agosto").
+     *
+     * ===============================
+     */
+
+    public function updateHighSeasonRanges(Request $request)
+    {
+        $validated = $request->validate([
+            'high_season_ranges' => 'present|array',
+            'high_season_ranges.*.start' => 'required|date_format:Y-m-d',
+            'high_season_ranges.*.end' => 'required|date_format:Y-m-d|after_or_equal:high_season_ranges.*.start',
+        ]);
+
+        $ranges = array_values($validated['high_season_ranges']);
+        CompanySetting::set('high_season_ranges', $ranges);
+
+        return response()->json(['high_season_ranges' => $ranges]);
+    }
+
+    /**
+     * ===============================
+     *
+     *  Meses de anticipación con que se avisa a un coordinador que una "reserva de mes" de
+     *  vacaciones (ver EmployeeAbsenceController::storeReservation()) ya necesita fechas
+     *  exactas definidas — configuración global, igual patrón que high_season_ranges.
+     *
+     * ===============================
+     */
+
+    public function updateVacationReminderMonths(Request $request)
+    {
+        $validated = $request->validate([
+            'vacation_reminder_months' => 'required|integer|min:1|max:12',
+        ]);
+
+        CompanySetting::set('vacation_reminder_months', $validated['vacation_reminder_months']);
+
+        return response()->json(['vacation_reminder_months' => $validated['vacation_reminder_months']]);
     }
 
     /**
@@ -190,12 +240,19 @@ class AreaController extends Controller
 
             $calendar = $schedule['calendar'];
             $index = $areaCalendars->search(fn($c) => $c->id === $calendar->id);
-            // "Apertura"/"Cierre" solo tiene sentido con exactamente 2 turnos; con 3+ colapsarían
-            // en "Cierre" para ambos, así que en ese caso se usan letras igual que modo variable.
+            // "Apertura"/"Cierre" con exactamente 2 turnos; con 3, el de en medio se etiqueta
+            // "Normal" (Apertura = más temprano, Normal = intermedio, Cierre = más tardío). Con
+            // 4+ turnos ya no hay un único "del medio" — se usan letras igual que modo variable.
+            $fixedModeLabel = function (int $index, int $total): ?string {
+                if ($total === 2) return $index === 0 ? 'Apertura' : 'Cierre';
+                if ($total === 3) return $index === 0 ? 'Apertura' : ($index === 1 ? 'Normal' : 'Cierre');
+                return null;
+            };
+
             $label = $index === false
                 ? ($schedule['shift_type'] === 'D' ? 'Turno diurno' : 'Turno nocturno')
-                : ($area->scheduling_mode === 'fijo' && $areaCalendars->count() <= 2
-                    ? ($index === 0 ? 'Apertura' : 'Cierre')
+                : ($area->scheduling_mode === 'fijo' && $fixedModeLabel($index, $areaCalendars->count()) !== null
+                    ? $fixedModeLabel($index, $areaCalendars->count())
                     : 'Calendario ' . chr(65 + $index));
 
             $employee->today_calendar = [

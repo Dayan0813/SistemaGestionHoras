@@ -1,3 +1,4 @@
+import EmployeeProfileModal from '@/Components/EmployeeProfileModal';
 import MainLayout from '@/Layouts/MainLayout';
 import { Link, usePage } from '@inertiajs/react';
 import { CalendarDays, Pencil } from 'lucide-react';
@@ -64,19 +65,28 @@ interface Props {
 interface EmployeeCardProps {
     e: Employee;
     active: boolean;
+    onOpenProfile: (uid: string) => void;
 }
 
-function EmployeeCard({ e, active }: EmployeeCardProps) {
+// Tarjeta compacta — el detalle completo (cédula, documento, empresa, dependencia, centro de
+// costo) vive en EmployeeProfileModal, que se abre al hacer clic en el nombre.
+function EmployeeCard({ e, active, onOpenProfile }: EmployeeCardProps) {
     const today = e.today_calendar;
     const todayColor = today?.shift_type === 'N' ? 'bg-slate-100 text-slate-700' : 'bg-[#eaf3d3] text-[#5e7a15]';
 
     return (
         <div className="rounded-lg bg-white p-4 shadow">
-            <div className="flex items-start justify-between">
-                <div>
-                    <p className="font-semibold">{e.name}</p>
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <button
+                        type="button"
+                        onClick={() => onOpenProfile(e.uid)}
+                        className="truncate text-left font-semibold text-gray-900 hover:text-[#a81c24] hover:underline"
+                    >
+                        {e.name}
+                    </button>
 
-                    <p className="flex flex-wrap items-center gap-1.5 text-sm text-gray-500">
+                    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-gray-500">
                         {e.cargo?.name || 'Sin cargo'}
                         <span
                             className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
@@ -93,7 +103,7 @@ function EmployeeCard({ e, active }: EmployeeCardProps) {
                     <p className="text-xs text-gray-400">{e.contrato?.name || '—'}</p>
                 </div>
 
-                <span className={`rounded-full px-2 py-1 text-xs ${active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                <span className={`flex-none rounded-full px-2 py-1 text-xs ${active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                     {e.estado}
                 </span>
             </div>
@@ -101,14 +111,13 @@ function EmployeeCard({ e, active }: EmployeeCardProps) {
     );
 }
 
-
-
 /* =========================
    COMPONENTE PRINCIPAL
 ========================= */
 
 export default function Show({ area, coordinator_name, stats, activos, inactivos }: Props) {
     const [editing, setEditing] = useState(false);
+    const [profileUid, setProfileUid] = useState<string | null>(null);
     const { auth } = usePage().props as unknown as { auth?: { user?: { permissions?: string[] } } };
     const canManageAreas = auth?.user?.permissions?.includes('areas.gestionar') ?? false;
     const canViewProgram = auth?.user?.permissions?.includes('programaciones.ver') ?? false;
@@ -116,7 +125,10 @@ export default function Show({ area, coordinator_name, stats, activos, inactivos
     return (
         <div className="mx-auto max-w-7xl p-6">
             <div className="flex items-center justify-between">
-                <Link href={route('areas')} className="flex w-fit items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:text-white">
+                <Link
+                    href={route('areas')}
+                    className="flex w-fit items-center gap-2 rounded-lg border border-[#a81c24] px-4 py-2 font-bold text-[#a81c24] transition hover:bg-[#a81c24] hover:text-white"
+                >
                     ← Volver
                 </Link>
 
@@ -190,7 +202,7 @@ export default function Show({ area, coordinator_name, stats, activos, inactivos
 
             <div className="mt-2 grid gap-4 md:grid-cols-2">
                 {activos.map((e) => (
-                    <EmployeeCard key={e.id} e={e} active={true} />
+                    <EmployeeCard key={e.id} e={e} active={true} onOpenProfile={setProfileUid} />
                 ))}
             </div>
 
@@ -201,15 +213,13 @@ export default function Show({ area, coordinator_name, stats, activos, inactivos
 
             <div className="mt-2 grid gap-4 md:grid-cols-2">
                 {inactivos.map((e) => (
-                    <EmployeeCard key={e.id} e={e} active={false} />
+                    <EmployeeCard key={e.id} e={e} active={false} onOpenProfile={setProfileUid} />
                 ))}
             </div>
+
+            <EmployeeProfileModal uid={profileUid} onClose={() => setProfileUid(null)} />
         </div>
     );
 }
 
 Show.layout = (page: React.ReactNode) => <MainLayout RouteNavbar={(page as any).props.currentRouteName}>{page}</MainLayout>;
-
-
-
-

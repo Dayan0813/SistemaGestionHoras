@@ -13,3 +13,4 @@ class Device extends Model
         'port' => 'integer'
     ];
 }
+

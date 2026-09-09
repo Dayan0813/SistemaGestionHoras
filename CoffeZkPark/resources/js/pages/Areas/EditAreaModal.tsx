@@ -109,14 +109,18 @@ export default function EditAreaModal({ show, area, onClose }: Props) {
                             <option value="variable">Horario variable (según demanda)</option>
                         </select>
                         <p className="mt-1 text-xs text-gray-400">
-                            Define cómo el coordinador de esta área va a programar turnos: con un patrón semanal fijo, o eligiendo
-                            días sueltos según la afluencia.
+                            Define cómo el coordinador de esta área va a programar turnos: con un patrón semanal fijo, o eligiendo días sueltos según
+                            la afluencia.
                         </p>
                         {errors.scheduling_mode && <p className="mt-1 text-xs text-red-600">{errors.scheduling_mode}</p>}
                     </div>
 
                     <div className="flex justify-end gap-3 border-t pt-4">
-                        <button type="button" onClick={handleClose} className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">
+                        <button
+                            type="button"
+                            onClick={handleClose}
+                            className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                        >
                             Cancelar
                         </button>
                         <button

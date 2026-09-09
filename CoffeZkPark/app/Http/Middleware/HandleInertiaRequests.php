@@ -54,6 +54,13 @@ class HandleInertiaRequests extends Middleware
                         'area_id' => $user->employee?->area_id,
                         'area_name' => $user->employee?->area?->nombre,
                         'area_scheduling_mode' => $user->employee?->area?->scheduling_mode,
+                        // Global para toda la empresa (no por área), como rangos de fechas
+                        // exactas (no meses completos) — ver CompanySetting.
+                        'area_high_season_ranges' => \App\Models\CompanySetting::get('high_season_ranges', []),
+                        // Meses de anticipación con que se avisa que una reserva de mes de
+                        // vacaciones (sin fechas todavía) ya necesita fechas exactas — ver
+                        // EmployeeAbsenceController::storeReservation().
+                        'vacation_reminder_months' => \App\Models\CompanySetting::get('vacation_reminder_months', 3),
                     ]
                     : null,
             ],

@@ -1,3 +1,10 @@
+// Rango de fechas [start,end] (ISO 'YYYY-MM-DD', inclusivo) marcado como temporada alta —
+// configuración GLOBAL para toda la empresa (ver Areas/Index.tsx y CompanySetting en backend).
+export interface HighSeasonRange {
+    start: string;
+    end: string;
+}
+
 export interface Calendar {
     id: number;
     area_id: number;
@@ -13,6 +20,10 @@ export interface Employee {
     estado: string;
     cargo?: { name: string } | null;
     contrato?: { name: string } | null;
+    // Saldo de vacaciones fraccionable (default 15, descontado al registrar una ausencia tipo
+    // "vacaciones" — ver EmployeeAbsenceController::store()). Ausente si el endpoint que trajo
+    // este empleado no lo incluyó explícitamente.
+    dias_vacaciones_disponibles?: number;
 }
 
 export interface WorkPosition {
@@ -27,6 +38,7 @@ export interface ProgramationOverride {
     id: number;
     date: string;
     calendar: Calendar;
+    work_position_id: number | null;
 }
 
 export interface Programation {
@@ -61,7 +73,7 @@ export interface DraftState {
     startDate: string;
     duration: number;
     selectedWeekdays: number[];
-    selectedDates: string[];
+    selectedDates?: string[];
     batches: DraftBatch[];
     selectedAttraction?: string | null;
     selectedWorkPositionId?: number | null;

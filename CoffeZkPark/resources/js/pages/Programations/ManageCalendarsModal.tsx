@@ -167,7 +167,9 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
 
                 {error && editingId === null && applyingId === null && <p className="mb-3 text-sm text-red-600">{error}</p>}
 
-                {catalogCalendars.length === 0 && !creating && <p className="mb-3 text-sm text-gray-500">Esta área todavía no tiene turnos creados.</p>}
+                {catalogCalendars.length === 0 && !creating && (
+                    <p className="mb-3 text-sm text-gray-500">Esta área todavía no tiene turnos creados.</p>
+                )}
 
                 <div className="space-y-3">
                     {catalogCalendars.map((cal) => (
@@ -209,7 +211,10 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
                                     {error && <p className="text-xs text-red-600">{error}</p>}
 
                                     <div className="flex justify-end gap-2 pt-1">
-                                        <button onClick={cancelEdit} className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100">
+                                        <button
+                                            onClick={cancelEdit}
+                                            className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100"
+                                        >
                                             Cancelar
                                         </button>
                                         <button
@@ -227,8 +232,8 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
                                         Aplicar {toHHMM(cal.hora_entrada)} - {toHHMM(cal.hora_salida)} a días específicos
                                     </p>
                                     <p className="text-xs text-gray-500">
-                                        Se asigna este turno solo en los días que elijas, a todos los empleados que tengan programación activa
-                                        ese día en esta área. El resto del mes no se toca.
+                                        Se asigna este turno solo en los días que elijas, a todos los empleados que tengan programación activa ese día
+                                        en esta área. El resto del mes no se toca.
                                     </p>
 
                                     <div className="space-y-1">
@@ -261,7 +266,10 @@ export default function ManageCalendarsModal({ areaId, calendars, onClose, onCha
                                     {applyFeedback && <p className="text-xs text-green-600">{applyFeedback}</p>}
 
                                     <div className="flex justify-end gap-2 pt-1">
-                                        <button onClick={cancelApply} className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100">
+                                        <button
+                                            onClick={cancelApply}
+                                            className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100"
+                                        >
                                             Cerrar
                                         </button>
                                         <button

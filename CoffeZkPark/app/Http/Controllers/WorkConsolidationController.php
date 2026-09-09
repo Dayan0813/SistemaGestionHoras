@@ -69,6 +69,7 @@ class WorkConsolidationController extends Controller
             'extra_festive_night'    => 0,
             'unplanned'              => 0,
             'total_general'          => 0,
+            'scheduled_hours'        => 0,
         ];
 
         // ================================
@@ -97,16 +98,21 @@ class WorkConsolidationController extends Controller
             }
 
             $globalTotals['total_general'] += $total_hours;
+            $globalTotals['scheduled_hours'] += $record->scheduled_hours;
 
             // ==== DEVOLVER REGISTRO TRANSFORMADO ====
             return [
-                'id'            => $record->id,
-                'employee_uid'  => $record->employee_uid,
-                'week_start'    => $record->week_start,
-                'week_end'      => $record->week_end,
-                'hours'         => $hours,
-                'total_hours'   => $total_hours,
-                'payload'       => $record->daily_breakdown,
+                'id'              => $record->id,
+                'employee_uid'    => $record->employee_uid,
+                'week_start'      => $record->week_start,
+                'week_end'        => $record->week_end,
+                'scheduled_hours' => $record->scheduled_hours,
+                'hours'           => $hours,
+                'total_hours'     => $total_hours,
+                // Marcado - programado: positivo = trabajó más de lo programado (extras/no
+                // programado), negativo = trabajó menos de lo que debía.
+                'hours_difference' => round($total_hours - $record->scheduled_hours, 2),
+                'payload'         => $record->daily_breakdown,
             ];
         });
 
@@ -333,6 +339,8 @@ class WorkConsolidationController extends Controller
                 'week_end'     => $to->toDateString(),
             ],
             [
+                'scheduled_hours'       => $result['scheduled_hours'],
+
                 'ordinary_day'          => $t['ordinary_day'],
                 'ordinary_night'        => $t['ordinary_night'],
                 'ordinary_festive_day'  => $t['ordinary_festive_day'],

@@ -22,18 +22,32 @@ interface EligibleEmployee {
     name: string;
 }
 
+interface HighSeasonRange {
+    start: string;
+    end: string;
+}
+
 interface Props {
     currentRouteName: string;
     areas?: Area[];
     eligibleEmployees?: EligibleEmployee[];
+    highSeasonRanges?: HighSeasonRange[];
+    vacationReminderMonths?: number;
 }
 
-const Areas = ({ currentRouteName, areas, eligibleEmployees }: Props) => {
+const Areas = ({ currentRouteName, areas, eligibleEmployees, highSeasonRanges, vacationReminderMonths }: Props) => {
     const safeAreas: Area[] = Array.isArray(areas) ? areas : [];
     const safeEligibleEmployees: EligibleEmployee[] = Array.isArray(eligibleEmployees) ? eligibleEmployees : [];
+    const safeHighSeasonRanges: HighSeasonRange[] = Array.isArray(highSeasonRanges) ? highSeasonRanges : [];
+    const safeVacationReminderMonths: number = typeof vacationReminderMonths === 'number' ? vacationReminderMonths : 3;
     return (
         <div>
-            <Index areas={safeAreas} eligibleEmployees={safeEligibleEmployees} />
+            <Index
+                areas={safeAreas}
+                eligibleEmployees={safeEligibleEmployees}
+                highSeasonRanges={safeHighSeasonRanges}
+                vacationReminderMonths={safeVacationReminderMonths}
+            />
         </div>
     );
 };

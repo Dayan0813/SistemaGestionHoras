@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use App\Http\Controllers\DeviceController;
+use App\Http\Controllers\EmployeeAbsenceController;
 use App\Http\Controllers\EmployeeCatalogsController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\HolidayController;
@@ -134,6 +135,8 @@ Route::middleware(['auth', 'permission:areas.gestionar'])->group(function () {
 
     Route::post('/areas', [AreaController::class, 'store'])->name('areas.store');
     Route::put('/areas/{area}', [AreaController::class, 'update'])->name('areas.update');
+    Route::put('/areas-config/high-season-ranges', [AreaController::class, 'updateHighSeasonRanges'])->name('areas.updateHighSeasonRanges');
+    Route::put('/areas-config/vacation-reminder-months', [AreaController::class, 'updateVacationReminderMonths'])->name('areas.updateVacationReminderMonths');
 });
 
 // Antes no llevaban 'auth' en absoluto: cualquiera, sin sesión, podía golpear
@@ -214,6 +217,69 @@ Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () 
     )->name('programations.exportAllAreas');
 });
 
+Route::middleware(['auth', 'permission:ausencias.ver'])->group(function () {
+    Route::get('/ausencias', [EmployeeAbsenceController::class, 'index'])->name('ausencias');
+    Route::get('/ausencias/schedule', [EmployeeAbsenceController::class, 'schedule'])->name('ausencias.schedule');
+    Route::get('/ausencias/active-by-area', [EmployeeAbsenceController::class, 'activeByArea'])->name('ausencias.activeByArea');
+
+    // Planificación anual de vacaciones (prioritaria en enero): "empleado fijo" = por su
+    // CONTRATO (cualquiera que no sea "temporal"), no por el modo de programación de su área
+    // (que puede ser fija o variable indistintamente) — los de contrato "temporal" no tienen
+    // derecho a vacaciones (mismo criterio que storePlan() valida al guardar), así que no se
+    // listan en absoluto. Los que no tienen contrato asignado sí se incluyen, porque no hay
+    // forma de confirmar que sean temporales.
+    Route::get('/ausencias/plan-anual', function () {
+        $user = auth()->user()->loadMissing('employee');
+        $isAdmin = $user->hasRole('admin');
+        // aux_admin_th y aux_th no tienen área propia — igual que en /programaciones y
+        // /ausencias, en vez de bloquear con 403 se les da un selector para consultar (solo
+        // lectura) el plan de UNA área a la vez, nunca todas mezcladas.
+        $isMultiAreaReadOnly = $user->hasRole('aux_admin_th') || $user->hasRole('aux_th');
+        $areaId = $isAdmin ? null : ($isMultiAreaReadOnly ? request()->integer('area') ?: null : $user->employee?->area_id);
+
+        if (!$isAdmin && !$isMultiAreaReadOnly && !$areaId) {
+            abort(403, 'Usuario sin área asignada');
+        }
+
+        $employeesQuery = \App\Models\Employee::where('estado', 'Activo')
+            ->where(function ($q) {
+                $q->whereDoesntHave('contrato')
+                    ->orWhereHas('contrato', fn ($c) => $c->whereRaw('LOWER(name) NOT LIKE ?', ['%temporal%']));
+            });
+
+        if ($areaId) {
+            $employeesQuery->where('area_id', $areaId);
+        } elseif ($isMultiAreaReadOnly) {
+            // Sin área elegida todavía: no hay nada que listar (evita mezclar áreas).
+            $employeesQuery->whereRaw('1 = 0');
+        }
+
+        return Inertia::render('PlanVacaciones', [
+            'currentRouteName' => 'plan-vacaciones',
+            'employees' => $employeesQuery->with([
+                'contrato:id,name',
+                // Tandas de vacaciones ya planificadas (activas) — para mostrar el rango de
+                // fechas de cada una en la tabla, no solo el saldo restante.
+                'absences' => fn ($q) => $q->where('type', 'vacaciones')->where('status', 'Activa')->orderBy('start_date'),
+            ])
+                ->orderBy('name')
+                ->get(['uid', 'name', 'contrato_id', 'dias_vacaciones_disponibles', 'area_id']),
+            'highSeasonRanges' => \App\Models\CompanySetting::get('high_season_ranges', []),
+            'vacationReminderMonths' => \App\Models\CompanySetting::get('vacation_reminder_months', 3),
+            'allAreas' => $isMultiAreaReadOnly ? area::orderBy('nombre')->get(['id', 'nombre']) : null,
+            'selectedArea' => $isMultiAreaReadOnly ? $areaId : null,
+        ]);
+    })->name('plan-vacaciones');
+});
+
+Route::middleware(['auth', 'permission:ausencias.crear', 'throttle:300,1'])->group(function () {
+    Route::post('/ausencias', [EmployeeAbsenceController::class, 'store'])->name('ausencias.store');
+    Route::post('/ausencias/plan', [EmployeeAbsenceController::class, 'storePlan'])->name('ausencias.storePlan');
+    Route::post('/ausencias/reservation', [EmployeeAbsenceController::class, 'storeReservation'])->name('ausencias.storeReservation');
+    Route::put('/ausencias/{absence}/plan', [EmployeeAbsenceController::class, 'updatePlanRange'])->name('ausencias.updatePlanRange');
+    Route::delete('/ausencias/{absence}', [EmployeeAbsenceController::class, 'destroy'])->name('ausencias.destroy');
+});
+
 Route::middleware(['auth', 'permission:calendarios.gestionar'])->group(function () {
     // Endpoint para obtener calendarios por area
     Route::get('/calendars/area/{areaId}', [CalendarsController::class, 'byArea'])->name('calendars.byArea');
@@ -242,17 +308,24 @@ Route::middleware(['auth', 'permission:work_positions.gestionar'])->group(functi
     Route::delete('/workPositions/{workPosition}', [WorkPositionController::class, 'destroy'])->name('workPositions.destroy');
 });
 
-Route::middleware(['auth', 'permission:programaciones.crear'])->group(function () {
+// throttle:300,1 -> 300 envíos por minuto por usuario autenticado. Programaciones.tsx sube
+// el borrador en un POST por cada "batch" (bloque contiguo por empleado/puesto/turno) en vez
+// de un solo request para todo el lote — un mes completo con varios empleados y cambios de
+// turno puntuales fácilmente genera decenas o cientos de batches seguidos, así que el límite
+// tiene que quedar muy por encima de ese patrón normal; solo existe para frenar un bucle
+// descontrolado o un abuso real, no el guardado legítimo de una programación grande.
+Route::middleware(['auth', 'permission:programaciones.crear', 'throttle:300,1'])->group(function () {
     Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
 });
 
-Route::middleware(['auth', 'permission:programaciones.editar'])->group(function () {
+Route::middleware(['auth', 'permission:programaciones.editar', 'throttle:300,1'])->group(function () {
     Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');
     Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
 });
 
 Route::middleware(['auth', 'permission:empleados.ver'])->group(function () {
     Route::get('/empleados', [EmployeeController::class, 'index'])->name('empleados');
+    Route::get('/empleados/{uid}/perfil', [EmployeeController::class, 'profile'])->name('empleados.perfil');
 });
 
 Route::middleware(['auth', 'permission:empleados.crear'])->group(function () {

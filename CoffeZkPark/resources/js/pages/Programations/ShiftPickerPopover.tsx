@@ -34,7 +34,10 @@ export default function ShiftPickerPopover({
     return createPortal(
         <>
             <div className="fixed inset-0 z-40" onClick={onClose} />
-            <div style={{ position: 'fixed', zIndex: 50, ...style }} className="flex gap-1.5 rounded-md border border-gray-200 bg-white p-1.5 shadow-lg">
+            <div
+                style={{ position: 'fixed', zIndex: 50, ...style }}
+                className="flex gap-1.5 rounded-md border border-gray-200 bg-white p-1.5 shadow-lg"
+            >
                 {calendars.map((cal) => (
                     <button
                         key={cal.id}

@@ -9,21 +9,12 @@ interface AutocompleteProps<T> {
     value?: T | null;
 }
 
-export default function Autocomplete<T>({
-    items,
-    getLabel,
-    getSubLabel,
-    onSelect,
-    placeholder = 'Buscar...',
-    value,
-}: AutocompleteProps<T>) {
+export default function Autocomplete<T>({ items, getLabel, getSubLabel, onSelect, placeholder = 'Buscar...', value }: AutocompleteProps<T>) {
     const [query, setQuery] = useState('');
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
 
-    const filtered = items.filter((item) =>
-        getLabel(item).toLowerCase().includes(query.toLowerCase())
-    );
+    const filtered = items.filter((item) => getLabel(item).toLowerCase().includes(query.toLowerCase()));
 
     // cerrar al hacer click fuera
     useEffect(() => {
@@ -47,38 +38,30 @@ export default function Autocomplete<T>({
                 }}
                 onFocus={() => setOpen(true)}
                 placeholder={placeholder}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:ring-gray-500"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
             />
 
             {open && (
-                <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white shadow-lg">
-                    {filtered.length === 0 && (
-                        <div className="px-3 py-2 text-sm text-gray-500">
-                            Sin resultados
-                        </div>
-                    )}
+                <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+                    <div className="max-h-80 space-y-0.5 overflow-y-auto p-2">
+                        {filtered.length === 0 && <div className="px-3 py-4 text-center text-sm text-gray-400">Sin resultados</div>}
 
-                    {filtered.map((item, index) => (
-                        <div
-                            key={index}
-                            onClick={() => {
-                                onSelect(item);
-                                setQuery('');
-                                setOpen(false);
-                            }}
-                            className="cursor-pointer px-3 py-2 hover:bg-gray-100"
-                        >
-                            <div className="text-sm font-medium text-gray-900">
-                                {getLabel(item)}
+                        {filtered.map((item, index) => (
+                            <div
+                                key={index}
+                                onClick={() => {
+                                    onSelect(item);
+                                    setQuery('');
+                                    setOpen(false);
+                                }}
+                                className="cursor-pointer rounded-lg px-3.5 py-2.5 transition-colors hover:bg-[#eaf3d3]"
+                            >
+                                <div className="text-sm font-semibold text-gray-900">{getLabel(item)}</div>
+
+                                {getSubLabel && <div className="mt-0.5 text-xs text-gray-500">{getSubLabel(item)}</div>}
                             </div>
-
-                            {getSubLabel && (
-                                <div className="text-xs text-gray-500">
-                                    {getSubLabel(item)}
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
             )}
         </div>

@@ -6,6 +6,7 @@ use App\Models\area as Area;
 use App\Models\cargo as Cargo;
 use App\Models\contrato as Contrato;
 use App\Models\Employee;
+use App\Models\Programations;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -247,7 +248,22 @@ class EmployeeController extends Controller
             $validated['empresa'] = $contrato?->id;
         }
 
+        $previousAreaId = $employee->area_id;
+
         $employee->update($validated);
+
+        // Si el área cambió, sus programaciones vigentes/futuras de la área ANTERIOR
+        // se cancelan: si no, quedarían "activas" ahí para siempre y podrían solaparse
+        // en fecha con las nuevas de la área actual (ver ProgramationsController::store/
+        // update, que ahora acota los choques a una sola área) sin que nada las descarte.
+        // El historial pasado (end_date ya vencido) se deja intacto.
+        if (!empty($validated['area_id']) && $previousAreaId && (int) $validated['area_id'] !== (int) $previousAreaId) {
+            Programations::where('employee_uid', $employee->uid)
+                ->where('area_id', $previousAreaId)
+                ->where('status', '!=', 'Cancelado')
+                ->where('end_date', '>=', now()->toDateString())
+                ->update(['status' => 'Cancelado']);
+        }
 
         return redirect()
             ->route('empleados')
@@ -286,6 +302,49 @@ class EmployeeController extends Controller
         return redirect()
             ->route('empleados')
             ->with('success', 'Empleado eliminado correctamente');
+    }
+
+    // =======================
+    // PERFIL (solo lectura)
+    // =======================
+
+    /**
+     * Ficha de un empleado para mostrar al hacer clic en su nombre desde las vistas de
+     * programación (Consulta por área, Vista previa). Mismo control de acceso que
+     * update/destroy: un coordinador solo ve empleados de su propia área; admin/aux_th/
+     * aux_admin_th pueden ver cualquiera (ensureCoordinatorArea ya maneja esa distinción).
+     */
+    public function profile(string $uid)
+    {
+        $employee = Employee::where('uid', $uid)
+            ->with(['area:id,nombre', 'cargo:id,name', 'contrato:id,name'])
+            ->firstOrFail();
+
+        $this->ensureCoordinatorArea($employee);
+
+        // 'cargo' es a la vez una columna de texto libre legacy (empleados viejos, sin
+        // cargo_id normalizado) y el nombre de la relación cargo() — cuando la columna tiene
+        // valor, la propiedad mágica $employee->cargo devuelve ese STRING en vez del modelo
+        // relacionado, y "$employee->cargo?->name" revienta contra un string. getRelationValue()
+        // fuerza a leer la relación real (ya cargada arriba con el 'with'), sin ese conflicto.
+        $cargoRelation = $employee->getRelationValue('cargo');
+        $cargoLegacyText = is_string($employee->getAttributes()['cargo'] ?? null) ? $employee->getAttributes()['cargo'] : null;
+
+        return response()->json([
+            'uid' => $employee->uid,
+            'name' => $employee->name,
+            'estado' => $employee->estado,
+            'cardno' => $employee->cardno,
+            'documentos' => $employee->documentos,
+            'dispositivo' => $employee->dispositivo,
+            'horario' => $employee->horario,
+            'empresa' => $employee->empresa,
+            'dependencia' => $employee->dependencia,
+            'centrocosto' => $employee->centrocosto,
+            'area' => $employee->area?->nombre,
+            'cargo' => $cargoRelation?->name ?? $cargoLegacyText,
+            'contrato' => $employee->contrato?->name,
+        ]);
     }
 
     private function ensureCoordinatorArea(Employee $employee): void

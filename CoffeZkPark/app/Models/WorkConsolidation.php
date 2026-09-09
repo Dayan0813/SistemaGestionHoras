@@ -11,6 +11,9 @@ class WorkConsolidation extends Model
         'week_start',
         'week_end',
 
+        // Total programado (para comparar contra lo realmente marcado)
+        'scheduled_hours',
+
         // Ordinarias
 
         'ordinary_day',

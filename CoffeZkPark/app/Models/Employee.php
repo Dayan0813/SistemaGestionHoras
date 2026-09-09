@@ -27,6 +27,7 @@ class Employee extends Model
         'centrocosto',
         'area_id',
         'contrato_id',
+        'dias_vacaciones_disponibles',
     ];
 
 
@@ -79,6 +80,13 @@ class Employee extends Model
     public function user()
     {
         return $this->hasOne(User::class, 'employee_uid', 'uid');
+    }
+
+    //
+
+    public function absences()
+    {
+        return $this->hasMany(EmployeeAbsence::class, 'employee_uid', 'uid');
     }
 
 

@@ -67,12 +67,7 @@ export default function DetailsProgramations() {
             />
 
             {managingCalendars && (
-                <ManageCalendarsModal
-                    areaId={areaId}
-                    calendars={calendars}
-                    onClose={() => setManagingCalendars(false)}
-                    onChanged={fetchCalendars}
-                />
+                <ManageCalendarsModal areaId={areaId} calendars={calendars} onClose={() => setManagingCalendars(false)} onChanged={fetchCalendars} />
             )}
         </div>
     );

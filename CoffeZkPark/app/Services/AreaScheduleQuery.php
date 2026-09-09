@@ -43,9 +43,13 @@ class AreaScheduleQuery
                     })
                         ->with([
                             'calendar:id,area_id,hora_entrada,hora_salida,shift_type',
+                            'workPosition:id,area_id,attraction,name',
                             'overrides' => function ($oq) use ($startOfMonth, $endOfMonth) {
                                 $oq->whereBetween('date', [$startOfMonth, $endOfMonth])
-                                    ->with('calendar:id,area_id,hora_entrada,hora_salida,shift_type');
+                                    ->with([
+                                        'calendar:id,area_id,hora_entrada,hora_salida,shift_type',
+                                        'workPosition:id,area_id,attraction,name',
+                                    ]);
                             }
                         ]);
                 }

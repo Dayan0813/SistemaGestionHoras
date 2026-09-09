@@ -29,6 +29,8 @@ class PermissionSeeder extends Seeder
             'dispositivos.gestionar' => 'Gestionar dispositivos',
             'work_positions.ver' => 'Consultar puestos de trabajo',
             'work_positions.gestionar' => 'Gestionar puestos de trabajo',
+            'ausencias.ver' => 'Consultar ausencias',
+            'ausencias.crear' => 'Crear y cancelar ausencias',
         ];
 
         foreach ($permissions as $name => $description) {
@@ -43,12 +45,14 @@ class PermissionSeeder extends Seeder
                 'areas.ver', 'calendarios.gestionar', 'work_positions.ver', 'work_positions.gestionar',
                 'empleados.ver', 'empleados.crear', 'empleados.editar', 'empleados.eliminar',
                 'consolidados.ver', 'consolidados.generar',
+                'ausencias.ver', 'ausencias.crear',
             ],
             'aux_admin_th' => [
                 'programaciones.ver', 'programaciones.crear', 'programaciones.editar',
                 'areas.ver', 'calendarios.gestionar', 'work_positions.ver', 'work_positions.gestionar',
                 'empleados.ver', 'empleados.crear', 'empleados.editar', 'empleados.eliminar',
                 'consolidados.ver', 'consolidados.generar',
+                'ausencias.ver', 'ausencias.crear',
             ],
             'admin_nomina' => [
                 'empleados.ver', 'empleados.crear', 'empleados.editar', 'empleados.eliminar',
@@ -62,6 +66,9 @@ class PermissionSeeder extends Seeder
                 'consolidados.ver', 'consolidados.generar',
                 'marcaciones.ver',
                 'marcaciones.sincronizar',
+                // Solo lectura, igual que programaciones.ver (aux_th no tiene programaciones.crear
+                // ni ausencias.crear): puede consultar el Plan de Vacaciones pero no crear/editar tandas.
+                'ausencias.ver',
             ],
         ];
 

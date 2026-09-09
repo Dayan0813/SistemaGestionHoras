@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
+use App\Models\EmployeeAbsence;
 use App\Models\Holidays;
 
 class ConsolidationEngine
@@ -38,18 +39,40 @@ class ConsolidationEngine
             'unplanned'               => 0.0,
         ];
 
+        // Total de horas PROGRAMADAS (suma de la duración de cada turno asignado, día por
+        // día) — independiente de `totals`, que es lo realmente MARCADO. Sirve para comparar
+        // "lo que se programó" contra "lo que se trabajó" en el mismo rango.
+        $scheduledHours = 0.0;
+
+        // Rangos [start_date, end_date] de las ausencias ACTIVAS del empleado que se solapan
+        // con el periodo consolidado — una sola query para todo el rango (no una por día).
+        // Programations ya queda "recortada" cuando se registra una ausencia sin reemplazo
+        // (ver EmployeeAbsenceController::hideEmployeeDays()), así que scheduleResolver ya no
+        // devuelve turno esos días; pero una marcación biométrica real ese mismo día (el
+        // empleado marcó por error, o el dispositivo lo siguió registrando) no depende de
+        // Programations, y sin este chequeo se contaba igual como horas "no programadas".
+        $absenceRanges = EmployeeAbsence::where('employee_uid', $employeeUid)
+            ->where('status', 'Activa')
+            ->whereNotNull('start_date')
+            ->where('start_date', '<=', $to)
+            ->where('end_date', '>=', $from)
+            ->get(['start_date', 'end_date'])
+            ->map(fn ($a) => [$a->start_date->toDateString(), $a->end_date->toDateString()]);
+
+        $isAbsentOn = function (string $dateKey) use ($absenceRanges): bool {
+            foreach ($absenceRanges as [$start, $end]) {
+                if ($dateKey >= $start && $dateKey <= $end) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         $days   = [];
         $period = CarbonPeriod::create($from, $to);
 
         foreach ($period as $date) {
             $dateKey  = $date->toDateString();
-
-            // Programación del día
-            $schedule = $this->scheduleResolver->getDailySchedule($employeeUid, $date);
-
-            // Sesiones (entrada/salida) realmente trabajadas ese día. Puede
-            // haber más de una (ej. salida a almuerzo y regreso).
-            $sessions = $this->markingResolver->getDailyWork($employeeUid, $date, $schedule);
 
             // Inicializar horas diarias
             $dayHours = [
@@ -64,6 +87,34 @@ class ConsolidationEngine
                 'unplanned'               => 0.0,
             ];
 
+            if ($isAbsentOn($dateKey)) {
+                // Día de vacaciones/incapacidad activa: no cuenta como programado ni como
+                // trabajado, sin importar lo que diga el biométrico ese día.
+                $days[$dateKey] = [
+                    'scheduled'        => null,
+                    'scheduled_hours'  => 0.0,
+                    'sessions'         => [],
+                    'hours'            => $dayHours,
+                    'absent'           => true,
+                ];
+                continue;
+            }
+
+            // Programación del día
+            $schedule = $this->scheduleResolver->getDailySchedule($employeeUid, $date);
+
+            // Duración del turno programado ese día (0 si no tiene turno) — mismo criterio de
+            // horas que shiftHours() en el frontend: la salida ya viene ajustada +1 día si el
+            // turno es nocturno (ver ScheduleResolver::getDailySchedule).
+            $dayScheduledHours = $schedule
+                ? $schedule['scheduled_start']->diffInMinutes($schedule['scheduled_end'], true) / 60
+                : 0.0;
+            $scheduledHours += $dayScheduledHours;
+
+            // Sesiones (entrada/salida) realmente trabajadas ese día. Puede
+            // haber más de una (ej. salida a almuerzo y regreso).
+            $sessions = $this->markingResolver->getDailyWork($employeeUid, $date, $schedule);
+
             foreach ($sessions ?? [] as $session) {
                 $this->classifyWork(
                     $schedule,
@@ -74,9 +125,10 @@ class ConsolidationEngine
             }
 
             $days[$dateKey] = [
-                'scheduled' => $schedule,
-                'sessions'  => $sessions ?? [],
-                'hours'     => $dayHours,
+                'scheduled'        => $schedule,
+                'scheduled_hours'  => round($dayScheduledHours, 2),
+                'sessions'         => $sessions ?? [],
+                'hours'            => $dayHours,
             ];
 
             // Acumular totales globales
@@ -86,11 +138,12 @@ class ConsolidationEngine
         }
 
         return [
-            'employee_uid' => $employeeUid,
-            'from'         => $from->toDateString(),
-            'to'           => $to->toDateString(),
-            'days'         => $days,
-            'totals'       => $totals,
+            'employee_uid'     => $employeeUid,
+            'from'             => $from->toDateString(),
+            'to'               => $to->toDateString(),
+            'days'             => $days,
+            'totals'           => $totals,
+            'scheduled_hours'  => round($scheduledHours, 2),
         ];
     }
 

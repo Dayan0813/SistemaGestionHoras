@@ -56,4 +56,11 @@ class Programations extends Model
     {
         return $this->hasMany(ProgramationOverride::class, 'programation_id');
     }
+
+    //
+
+    public function workPosition()
+    {
+        return $this->belongsTo(WorkPosition::class, 'work_position_id');
+    }
 }

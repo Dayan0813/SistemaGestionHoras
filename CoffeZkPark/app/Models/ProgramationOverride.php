@@ -10,6 +10,7 @@ class ProgramationOverride extends Model
         'programation_id',
         'date',
         'calendar_id',
+        'work_position_id',
     ];
 
     //
@@ -24,5 +25,12 @@ class ProgramationOverride extends Model
     public function calendar()
     {
         return $this->belongsTo(calendars::class, 'calendar_id');
+    }
+
+    //
+
+    public function workPosition()
+    {
+        return $this->belongsTo(WorkPosition::class, 'work_position_id');
     }
 }
