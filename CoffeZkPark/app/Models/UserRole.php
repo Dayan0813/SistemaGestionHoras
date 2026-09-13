@@ -6,14 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class UserRole extends Model
 {
-    protected $fillable = ['user_id', 'role'];
-
-    // Relaciones
-
-    //
+    protected $fillable = [
+        'user_id',
+        'role',
+    ];
 
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 }

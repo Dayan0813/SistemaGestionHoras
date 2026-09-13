@@ -6,12 +6,16 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class RoleMiddleware
+class PermissionMiddleware
 {
+    /**
+     * Verifica que el usuario tenga al menos uno
+     * de los permisos indicados en la ruta.
+     */
     public function handle(
         Request $request,
         Closure $next,
-        ...$roles
+        ...$permissions
     ): Response {
         $user = auth()->guard('web')->user();
 
@@ -19,8 +23,8 @@ class RoleMiddleware
             abort(403);
         }
 
-        foreach ($roles as $role) {
-            if ($user->hasRole($role)) {
+        foreach ($permissions as $permission) {
+            if ($user->hasPermission($permission)) {
                 return $next($request);
             }
         }
