@@ -2,7 +2,7 @@ import EmployeeProfileModal from '@/Components/EmployeeProfileModal';
 import { usePage } from '@inertiajs/react';
 import axios from 'axios';
 import dayjs from 'dayjs';
-import { AlertTriangle, FileSpreadsheet } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyFixedAreaCutoff } from './programaciones.helpers';
 
@@ -102,6 +102,10 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
 
     const [year, setYear] = useState(dayjs().year());
     const [month, setMonth] = useState(dayjs().month() + 1);
+    // Semana visible (índice dentro de monthWeeks) de la tabla "Empleados x días" en modo
+    // fijo — se resetea a la semana que contiene hoy (o la primera del mes) al cambiar de
+    // área/mes/año, igual que ya hace el scroll horizontal más abajo.
+    const [weekIndex, setWeekIndex] = useState(0);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -124,19 +128,19 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
     // dayjs(`${year}-${month}-${day}`) que delega en el parser nativo de Date y trata
     // los strings sin hora como medianoche UTC (corriendo el día mostrado hacia atrás
     // en zonas horarias detrás de UTC, ej. Colombia).
-    const daysInMonth = dayjs(new Date(year, month - 1, 1)).daysInMonth();
-    const days = Array.from({ length: daysInMonth }, (_, i) => dayjs(new Date(year, month - 1, i + 1)));
+    // Memoizado: sin esto, "days" era un array NUEVO en cada render (así el usuario solo
+    // escribiera en un input o abriera el modal de perfil), lo que invalidaba en cascada
+    // todos los useMemo que dependen de él (positions, programationByEmployeeAndDay,
+    // monthWeeks, weeklyOverages) — recalculando el mes completo en cada render sin que
+    // cambiara ningún dato real.
+    const days = useMemo(() => {
+        const daysInMonth = dayjs(new Date(year, month - 1, 1)).daysInMonth();
+        return Array.from({ length: daysInMonth }, (_, i) => dayjs(new Date(year, month - 1, i + 1)));
+    }, [year, month]);
 
     /* =========================
        HELPERS
     ========================= */
-
-    const calendarLabel = (calendar: Calendar) => {
-        if (!calendar.hora_entrada || !calendar.hora_salida) {
-            return 'Horario no definido';
-        }
-        return `${calendar.hora_entrada.slice(0, 5)} - ${calendar.hora_salida.slice(0, 5)}`;
-    };
 
     // Comparación por string ISO ("YYYY-MM-DD" ordena igual lexicográfica y cronológicamente):
     // evita re-parsear las fechas del backend con dayjs y el corrimiento de día por UTC.
@@ -157,7 +161,28 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
         return p.work_days.includes(isoWeekday(dayISO));
     };
 
-    const getProgramationForDay = (employee: Employee, dayISO: string) => employee.programations.find((p) => coversDate(p, dayISO)) ?? null;
+    // employeeUid|dayISO -> programación que cubre ese día, precalculado UNA vez por
+    // employees/days (antes cada celda de la tabla llamaba a employee.programations.find(),
+    // recorriendo TODAS las programaciones del empleado por cada día visible — con muchos
+    // empleados y meses de historial esto se notaba, sobre todo en la tabla de modo fijo que
+    // consulta un día por celda para cada empleado x día de la semana).
+    const programationByEmployeeAndDay = useMemo(() => {
+        const index = new Map<string, Programation>();
+        for (const employee of employees) {
+            for (const day of days) {
+                const dayISO = day.format('YYYY-MM-DD');
+                const key = `${employee.uid}|${dayISO}`;
+                if (index.has(key)) continue;
+                const programation = employee.programations.find((p) => coversDate(p, dayISO));
+                if (programation) index.set(key, programation);
+            }
+        }
+        return index;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [employees, days]);
+
+    const getProgramationForDay = (employee: Employee, dayISO: string) =>
+        programationByEmployeeAndDay.get(`${employee.uid}|${dayISO}`) ?? null;
 
     const getCalendarForDay = (programation: Programation, date: string) => {
         const override = programation.overrides?.find((o) => o.date === date);
@@ -173,8 +198,6 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
         if (override && override.work_position_id !== null) return override.work_position;
         return programation.work_position;
     };
-
-    const shiftTint = (type: 'D' | 'N') => (type === 'D' ? 'bg-[#eaf3d3] text-[#5e7a15]' : 'bg-slate-100 text-slate-700');
 
     // true si esta fila de programación fue creada por una ausencia (vacaciones/incapacidad)
     // para que este empleado cubra a otro — ver EmployeeAbsenceController::store().
@@ -260,6 +283,16 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
         for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
         return weeks;
     }, [year, month, days]);
+
+    // Al cambiar de área/mes/año, la semana visible salta a la que contiene hoy (si hoy cae en
+    // el mes mostrado) o si no a la primera semana del mes — evita que quede "congelada" en un
+    // índice de semana que ya no tiene sentido para el nuevo período.
+    useEffect(() => {
+        const todayISO = dayjs().format('YYYY-MM-DD');
+        const idx = monthWeeks.findIndex((week) => week.some((day) => day?.format('YYYY-MM-DD') === todayISO));
+        setWeekIndex(idx >= 0 ? idx : 0);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [areaId, year, month]);
 
     // Jornada máxima legal semanal en Colombia (Ley 2101 de 2021, reducción gradual de la
     // jornada laboral, vigente 2026): 42 horas por semana calendario — mismo tope que usa
@@ -444,7 +477,6 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                                 )}
                                                             </div>
                                                             <div className="mt-1 flex items-center gap-1.5">
-                                                                <span className="text-[10px] text-gray-400">{calendarLabel(a.calendar)}</span>
                                                                 {a.contrato?.name && (
                                                                     <span
                                                                         className={`flex-none rounded-full px-1.5 py-0.5 text-[8px] font-semibold whitespace-nowrap ${contractBadgeColor(a.contrato.name)}`}
@@ -479,91 +511,118 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                     </p>
                 )
             ) : (
-                // Sin puestos configurados (modo fijo): un calendario de verdad, semanas como
-                // filas y lunes-domingo como columnas, con los nombres agrupados por turno
-                // debajo de cada día — en vez de una fila por empleado.
-                <div className="mx-5 mb-5 overflow-x-auto">
-                    <div className="grid min-w-[980px] grid-cols-7 gap-2">
-                        {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map((label) => (
-                            <div key={label} className="px-1 pb-1 text-center text-[10px] font-bold tracking-wide text-gray-400 uppercase">
-                                {label}
-                            </div>
-                        ))}
-                        {monthWeeks.flatMap((week, weekIndex) =>
-                            week.map((day, dayIndex) => {
-                                const cellKey = `${weekIndex}-${dayIndex}`;
-                                if (!day) return <div key={cellKey} className="rounded-xl border border-dashed border-gray-100" />;
+                // Sin puestos configurados (modo fijo): tabla invertida — una columna por
+                // empleado, una fila por día de la semana visible, con una X marcando el día
+                // en que ese empleado tiene turno programado. Navegable semana a semana dentro
+                // del mes elegido arriba (mes/año), en vez del calendario en grilla que había
+                // antes (días como celdas, empleados listados dentro de cada una).
+                <div className="mx-5 mb-5">
+                    <div className="mb-3 flex items-center justify-between">
+                        <button
+                            type="button"
+                            onClick={() => setWeekIndex((i) => Math.max(i - 1, 0))}
+                            disabled={weekIndex === 0}
+                            className="flex h-7 w-7 items-center justify-center rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            <ChevronLeft size={14} />
+                        </button>
+                        <p className="text-sm font-semibold text-gray-700">
+                            Semana {weekIndex + 1} de {monthWeeks.length}
+                            {monthWeeks[weekIndex] && (
+                                <span className="ml-2 font-normal text-gray-400">
+                                    (
+                                    {monthWeeks[weekIndex]
+                                        .find((d) => d)
+                                        ?.format('D MMM')}{' '}
+                                    –{' '}
+                                    {[...monthWeeks[weekIndex]]
+                                        .reverse()
+                                        .find((d) => d)
+                                        ?.format('D MMM')}
+                                    )
+                                </span>
+                            )}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setWeekIndex((i) => Math.min(i + 1, monthWeeks.length - 1))}
+                            disabled={weekIndex >= monthWeeks.length - 1}
+                            className="flex h-7 w-7 items-center justify-center rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            <ChevronRight size={14} />
+                        </button>
+                    </div>
 
-                                const dayISO = day.format('YYYY-MM-DD');
-                                const weekend = dayIndex >= 5;
+                    <div className="overflow-x-auto rounded-xl border border-gray-200">
+                        <table className="w-full min-w-[600px] border-collapse text-sm">
+                            <thead>
+                                <tr>
+                                    <th className="border-b border-gray-100 bg-gray-50 px-3 py-3 text-left text-[10px] font-bold text-gray-500 uppercase">
+                                        Empleado
+                                    </th>
+                                    {(monthWeeks[weekIndex] ?? []).map((day, dayIndex) => {
+                                        if (!day) return <th key={`blank-${dayIndex}`} className="border-b border-l border-gray-100 bg-gray-50" />;
+                                        const weekend = dayIndex >= 5;
+                                        return (
+                                            <th
+                                                key={day.format('YYYY-MM-DD')}
+                                                className={`border-b border-l border-gray-100 px-2 py-3 text-center text-[10px] font-bold whitespace-nowrap text-gray-500 uppercase ${weekend ? 'bg-gray-100' : 'bg-gray-50'}`}
+                                            >
+                                                {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'][dayIndex]}
+                                                <span className="mt-0.5 block font-mono text-[9px] font-normal text-gray-400 normal-case">
+                                                    {day.format('D MMM')}
+                                                </span>
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {employees.map((employee) => (
+                                    <tr key={employee.uid}>
+                                        <td className="border-b border-gray-100 px-3 py-2.5 text-xs font-semibold whitespace-nowrap text-gray-700">
+                                            <button
+                                                type="button"
+                                                onClick={() => setProfileUid(employee.uid)}
+                                                className="block max-w-[160px] truncate text-left hover:text-[#a81c24] hover:underline"
+                                                title={employee.name}
+                                            >
+                                                {employee.name}
+                                            </button>
+                                        </td>
+                                        {(monthWeeks[weekIndex] ?? []).map((day, dayIndex) => {
+                                            if (!day) return <td key={`blank-${dayIndex}`} className="border-b border-l border-gray-100" />;
+                                            const dayISO = day.format('YYYY-MM-DD');
+                                            const weekend = dayIndex >= 5;
+                                            const programation = getProgramationForDay(employee, dayISO);
+                                            const tooltip = isFirstOverageDay(employee.uid, dayISO) ? overageTooltip(employee.uid) : null;
+                                            const replacement = programation ? isAbsenceReplacement(programation) : false;
 
-                                const groups = new Map<number, { calendar: Calendar; employees: (Employee & { isAbsenceReplacement: boolean })[] }>();
-                                employees.forEach((employee) => {
-                                    const programation = getProgramationForDay(employee, dayISO);
-                                    if (!programation) return;
-                                    const calendar = getCalendarForDay(programation, dayISO);
-                                    const group = groups.get(calendar.id) ?? { calendar, employees: [] };
-                                    group.employees.push({ ...employee, isAbsenceReplacement: isAbsenceReplacement(programation) });
-                                    groups.set(calendar.id, group);
-                                });
-                                const sortedGroups = [...groups.values()].sort((a, b) =>
-                                    (a.calendar.hora_entrada ?? '').localeCompare(b.calendar.hora_entrada ?? ''),
-                                );
-
-                                return (
-                                    <div
-                                        key={cellKey}
-                                        className={`min-h-[110px] rounded-xl border border-gray-200 p-2 ${weekend ? 'bg-gray-50' : 'bg-white'}`}
-                                    >
-                                        <div className="mb-1.5 text-right font-mono text-sm text-gray-400">{day.format('D')}</div>
-                                        {sortedGroups.length === 0 ? (
-                                            <p className="text-center text-xs text-gray-300">—</p>
-                                        ) : (
-                                            <div className="space-y-1.5">
-                                                {sortedGroups.map(({ calendar, employees: emps }) => (
-                                                    <div key={calendar.id}>
+                                            return (
+                                                <td
+                                                    key={dayISO}
+                                                    className={`border-b border-l border-gray-100 px-2 py-2.5 text-center ${weekend ? 'bg-gray-50' : undefined}`}
+                                                >
+                                                    {programation && (
                                                         <span
-                                                            className={`block truncate rounded px-1 py-0.5 font-mono text-[11px] font-semibold ${shiftTint(calendar.shift_type)}`}
+                                                            className={`inline-flex items-center gap-1 font-bold ${replacement ? 'text-sky-600' : 'text-[#a81c24]'}`}
+                                                            title={replacement ? 'Cubre a un empleado ausente (vacaciones/incapacidad)' : undefined}
                                                         >
-                                                            {calendarLabel(calendar)}
+                                                            X
+                                                            {tooltip && (
+                                                                <span title={tooltip} className="text-[#a81c24]">
+                                                                    <AlertTriangle size={12} />
+                                                                </span>
+                                                            )}
                                                         </span>
-                                                        <ul>
-                                                            {emps.map((e) => {
-                                                                const tooltip = isFirstOverageDay(e.uid, dayISO) ? overageTooltip(e.uid) : null;
-                                                                return (
-                                                                    <li key={e.uid} className="flex items-center gap-1">
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => setProfileUid(e.uid)}
-                                                                            className="block min-w-0 flex-1 truncate text-left text-sm text-gray-700 hover:text-[#a81c24] hover:underline"
-                                                                        >
-                                                                            {e.name}
-                                                                        </button>
-                                                                        {tooltip && (
-                                                                            <span title={tooltip} className="flex-none text-[#a81c24]">
-                                                                                <AlertTriangle size={12} />
-                                                                            </span>
-                                                                        )}
-                                                                        {e.isAbsenceReplacement && (
-                                                                            <span
-                                                                                title="Cubre a un empleado ausente (vacaciones/incapacidad)"
-                                                                                className="flex-none rounded-full bg-sky-100 px-1.5 py-0.5 text-[8px] font-semibold whitespace-nowrap text-sky-700"
-                                                                            >
-                                                                                Reemplazo
-                                                                            </span>
-                                                                        )}
-                                                                    </li>
-                                                                );
-                                                            })}
-                                                        </ul>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            }),
-                        )}
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}

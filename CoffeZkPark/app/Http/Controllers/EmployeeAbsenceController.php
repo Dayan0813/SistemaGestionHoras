@@ -853,6 +853,14 @@ class EmployeeAbsenceController extends Controller
             ->where('end_date', '>=', $earliest)
             ->get();
 
+        // Snapshots y filas nuevas se acumulan aquí y se insertan en batch al final (en vez de
+        // un INSERT por candidata/bloque dentro del loop) — una incapacidad larga que toca
+        // varias programaciones semanales podía generar decenas de INSERT secuenciales.
+        $snapshotRows = [];
+        $newProgramationRows = [];
+        $idsToDelete = [];
+        $now = now();
+
         foreach ($candidates as $candidate) {
             $candidateDays = $this->coveredDates($candidate->start_date->toDateString(), $candidate->end_date->toDateString(), $candidate->work_days);
             $overlapsHidden = array_filter($candidateDays, fn ($d) => isset($hiddenDaySet[$d]));
@@ -861,29 +869,33 @@ class EmployeeAbsenceController extends Controller
                 continue;
             }
 
-            EmployeeAbsenceSnapshot::create([
+            $snapshotRows[] = [
                 'employee_absence_id' => $absence->id,
                 'employee_uid' => $candidate->employee_uid,
                 'calendar_id' => $candidate->calendar_id,
                 'work_position_id' => $candidate->work_position_id,
-                'start_date' => $candidate->start_date,
-                'end_date' => $candidate->end_date,
+                // insert() no pasa por los casts de Eloquent — start_date/end_date llegan como
+                // objetos Carbon (cast 'date' del modelo) y hay que serializarlos a string.
+                'start_date' => $candidate->start_date->toDateString(),
+                'end_date' => $candidate->end_date->toDateString(),
                 'status' => $candidate->status,
                 'type' => $candidate->type,
                 'group_code' => $candidate->group_code,
-                'work_days' => $candidate->work_days,
-            ]);
+                'work_days' => $candidate->work_days !== null ? json_encode($candidate->work_days) : null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
 
             $remainingDays = array_values(array_diff($candidateDays, array_keys($hiddenDaySet)));
             sort($remainingDays);
 
-            $candidate->delete();
+            $idsToDelete[] = $candidate->id;
 
             // Los días que quedan (si hay) se recrean como fila(s) nueva(s) sin work_days: ya
             // no hace falta el patrón semanal original, porque solo interesa cubrir
             // exactamente los días concretos que sobrevivieron al recorte.
             foreach ($this->toContiguousDateRanges($remainingDays) as $range) {
-                Programations::create([
+                $newProgramationRows[] = [
                     'employee_uid' => $employeeUid,
                     'type' => $candidate->type,
                     'area_id' => $candidate->area_id,
@@ -894,8 +906,20 @@ class EmployeeAbsenceController extends Controller
                     'status' => $candidate->status,
                     'group_code' => $candidate->group_code,
                     'work_days' => null,
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
+        }
+
+        if (!empty($snapshotRows)) {
+            EmployeeAbsenceSnapshot::insert($snapshotRows);
+        }
+        if (!empty($idsToDelete)) {
+            Programations::whereIn('id', $idsToDelete)->delete();
+        }
+        if (!empty($newProgramationRows)) {
+            Programations::insert($newProgramationRows);
         }
     }
 

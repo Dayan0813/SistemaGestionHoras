@@ -104,7 +104,13 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         $monthLabel = ucfirst($days[0]->locale('es')->isoFormat('MMMM'));
         $dayHeaders = array_map(fn (Carbon $d) => $d->format('d') . ' ' . ucfirst($d->locale('es')->isoFormat('ddd')), $days);
 
-        $grid = $this->buildPositionGrid($days);
+        // Índice [employeeUid][dayISO] => cobertura efectiva ese día, calculado UNA sola vez
+        // aquí y reusado por buildPositionGrid(), buildFixedModeGrid() y hoursForEmployeeDay()
+        // — antes cada uno repetía por su cuenta el mismo recorrido empleado×programación×día
+        // con su propio lookup lineal de "overrides->first()", triplicando el trabajo.
+        $coverageIndex = $this->buildCoverageIndex($days);
+
+        $grid = $this->buildPositionGrid($days, $coverageIndex);
 
         $rows = [];
         $attractionTitleRows = [];
@@ -135,20 +141,21 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
                 }
             }
         } else {
-            // Sin puestos configurados (modo fijo): una fila por TURNO (igual criterio que
-            // modo variable, que agrupa por puesto), no por empleado — así el nombre del
-            // empleado ya no ocupa la primera columna de cada fila, sino que aparece dentro
-            // de la celda del día, junto con los demás que comparten ese turno ese día.
+            // Sin puestos configurados (modo fijo): una fila por EMPLEADO, un día del mes por
+            // columna, con una "X" marcando el día en que ese empleado tiene turno programado
+            // (vacío si no trabaja) — mismo criterio que la tabla de AreaScheduleGrid.tsx
+            // (días arriba, empleados al lado). Antes esta hoja agrupaba por turno/horario con
+            // los nombres dentro de la celda del día; ya no se muestra el horario en ningún
+            // lado (ver buildFixedModeGrid()).
             $labelColumns = 1;
-            $rows[] = array_merge(['Turno'], $dayHeaders);
+            $rows[] = array_merge(['Empleado'], $dayHeaders);
 
-            $fixedGrid = $this->buildFixedModeGrid($days);
-            foreach ($fixedGrid as $shiftLabel => $cellsByDate) {
-                $row = [$shiftLabel];
+            $fixedGrid = $this->buildFixedModeGrid($days, $coverageIndex);
+            foreach ($fixedGrid as $employeeName => $cellsByDate) {
+                $row = [$employeeName];
                 foreach ($days as $date) {
-                    $row[] = $cellsByDate[$date->toDateString()] ?? 'X';
+                    $row[] = $cellsByDate[$date->toDateString()] ?? '';
                 }
-                $rowLineCounts[count($rows)] = $this->maxNamesInRow($cellsByDate);
                 $rows[] = $row;
             }
         }
@@ -176,10 +183,10 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         // semanas vacías) aunque solo se hubiera programado una.
         $isFijoArea = empty($grid);
         $allWeekGroups = $this->weekGroups($days);
-        $weekGroups = array_values(array_filter($allWeekGroups, function (array $dayIndexes) use ($days, $isFijoArea) {
+        $weekGroups = array_values(array_filter($allWeekGroups, function (array $dayIndexes) use ($days, $isFijoArea, $coverageIndex) {
             foreach ($dayIndexes as $dayIndex) {
                 foreach ($this->employees as $employee) {
-                    if ($this->hoursForEmployeeDay($employee, $days[$dayIndex], $isFijoArea) > 0) {
+                    if ($this->hoursForEmployeeDay($employee, $days[$dayIndex], $isFijoArea, $coverageIndex) > 0) {
                         return true;
                     }
                 }
@@ -204,7 +211,7 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
             foreach ($weekGroups as $dayIndexes) {
                 $weekTotal = 0.0;
                 foreach ($dayIndexes as $dayIndex) {
-                    $weekTotal += $this->hoursForEmployeeDay($employee, $days[$dayIndex], $isFijoArea);
+                    $weekTotal += $this->hoursForEmployeeDay($employee, $days[$dayIndex], $isFijoArea, $coverageIndex);
                 }
                 $row[] = round($weekTotal, 1);
             }
@@ -286,57 +293,100 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
     }
 
     /**
+     * [employeeUid][dayISO] => ['programation' => Programation, 'calendar' => Calendar|null,
+     * 'workPosition' => WorkPosition|null, 'isAbsenceReplacement' => bool] con la cobertura
+     * EFECTIVA de cada empleado cada día del rango (override puntual si existe, si no la fila
+     * base) — un solo recorrido empleado×programación×día, con UN lookup de override por
+     * combinación, reusado por buildPositionGrid(), buildFixedModeGrid() y
+     * hoursForEmployeeDay(), que antes repetían cada uno este mismo recorrido con su propio
+     * "overrides->first()" lineal.
+     *
+     * @param Carbon[] $days
+     */
+    private function buildCoverageIndex(array $days): array
+    {
+        $index = [];
+
+        foreach ($this->employees as $employee) {
+            foreach ($employee->programations as $programation) {
+                // Overrides de esta programación indexados por fecha una sola vez, en vez de
+                // un "first(fn ($o) => ...)" lineal por cada día del rango.
+                $overridesByDate = $programation->overrides->keyBy('date');
+                $isAbsenceReplacement = str_starts_with((string) $programation->group_code, 'absence:');
+
+                foreach ($days as $date) {
+                    $dateIso = $date->toDateString();
+
+                    if (isset($index[$employee->uid][$dateIso])) {
+                        continue; // ya cubierto por otra programación (la primera que calce gana).
+                    }
+
+                    if ($dateIso < $programation->start_date->toDateString() || $dateIso > $programation->end_date->toDateString()) {
+                        continue;
+                    }
+
+                    if (!empty($programation->work_days) && !in_array($date->isoWeekday(), $programation->work_days, true)) {
+                        continue;
+                    }
+
+                    $override = $overridesByDate->get($dateIso);
+                    $workPosition = ($override && $override->work_position_id !== null) ? $override->workPosition : $programation->workPosition;
+
+                    $index[$employee->uid][$dateIso] = [
+                        'calendar' => $override?->calendar ?? $programation->calendar,
+                        'workPosition' => $workPosition,
+                        'isAbsenceReplacement' => $isAbsenceReplacement,
+                    ];
+                }
+            }
+        }
+
+        return $index;
+    }
+
+    /**
      * Horas que dura el turno efectivo de un empleado en una fecha concreta (0 si no
      * trabaja ese día). Un turno nocturno que cruza medianoche cuenta completo en el día
      * en que empieza — mismo criterio que shiftHours() en AreaScheduleGrid.tsx. $isFijoArea
      * indica si el área NO tiene puestos configurados (modo fijo), lo que activa el tope de
      * lunes/martes.
      */
-    private function hoursForEmployeeDay(Employee $employee, Carbon $date, bool $isFijoArea = false): float
+    private function hoursForEmployeeDay(Employee $employee, Carbon $date, bool $isFijoArea, array $coverageIndex): float
     {
         $dateIso = $date->toDateString();
-
-        foreach ($employee->programations as $programation) {
-            if ($dateIso < $programation->start_date->toDateString() || $dateIso > $programation->end_date->toDateString()) {
-                continue;
-            }
-
-            if (!empty($programation->work_days) && !in_array($date->isoWeekday(), $programation->work_days, true)) {
-                continue;
-            }
-
-            $override = $programation->overrides->first(fn ($o) => $o->date === $dateIso);
-            $calendar = $override?->calendar ?? $programation->calendar;
-            $hours = $this->shiftHoursDecimal($calendar);
-
-            if (!$isFijoArea || !$calendar || !$calendar->hora_entrada) {
-                return $hours;
-            }
-
-            // En temporada alta esta política de horario corto no aplica — se trabaja normal.
-            if ($this->isHighSeasonDate($date)) {
-                return $hours;
-            }
-
-            $cutoffMinutes = match ($date->isoWeekday()) {
-                1 => self::FIXED_AREA_MONDAY_CUTOFF_MINUTES,
-                2 => self::FIXED_AREA_TUESDAY_CUTOFF_MINUTES,
-                default => null,
-            };
-            if ($cutoffMinutes === null) {
-                return $hours;
-            }
-
-            [$inH, $inM] = array_map('intval', explode(':', $calendar->hora_entrada));
-            $entradaMinutes = $inH * 60 + $inM;
-            if ($entradaMinutes >= $cutoffMinutes) {
-                return $hours; // turno nocturno u otro caso raro: no recortar a negativo.
-            }
-
-            return min($hours * 60, $cutoffMinutes - $entradaMinutes) / 60;
+        $coverage = $coverageIndex[$employee->uid][$dateIso] ?? null;
+        if ($coverage === null) {
+            return 0.0;
         }
 
-        return 0.0;
+        $calendar = $coverage['calendar'];
+        $hours = $this->shiftHoursDecimal($calendar);
+
+        if (!$isFijoArea || !$calendar || !$calendar->hora_entrada) {
+            return $hours;
+        }
+
+        // En temporada alta esta política de horario corto no aplica — se trabaja normal.
+        if ($this->isHighSeasonDate($date)) {
+            return $hours;
+        }
+
+        $cutoffMinutes = match ($date->isoWeekday()) {
+            1 => self::FIXED_AREA_MONDAY_CUTOFF_MINUTES,
+            2 => self::FIXED_AREA_TUESDAY_CUTOFF_MINUTES,
+            default => null,
+        };
+        if ($cutoffMinutes === null) {
+            return $hours;
+        }
+
+        [$inH, $inM] = array_map('intval', explode(':', $calendar->hora_entrada));
+        $entradaMinutes = $inH * 60 + $inM;
+        if ($entradaMinutes >= $cutoffMinutes) {
+            return $hours; // turno nocturno u otro caso raro: no recortar a negativo.
+        }
+
+        return min($hours * 60, $cutoffMinutes - $entradaMinutes) / 60;
     }
 
     private function shiftHoursDecimal($calendar): float
@@ -484,39 +534,27 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
     /**
      * atracción => [puesto => [fecha ISO => "Nombre 1, Nombre 2"]], ordenado
      * alfabéticamente por atracción y por puesto. Vacío si el área no tiene
-     * puestos configurados (modo fijo).
+     * puestos configurados (modo fijo). Lee de $coverageIndex (buildCoverageIndex()) en vez
+     * de re-derivar la cobertura de cada empleado×día.
      *
      * @param Carbon[] $days
      */
-    private function buildPositionGrid(array $days): array
+    private function buildPositionGrid(array $days, array $coverageIndex): array
     {
         $grid = [];
 
         foreach ($this->employees as $employee) {
-            foreach ($employee->programations as $programation) {
-                foreach ($days as $date) {
-                    $dateIso = $date->toDateString();
-
-                    if ($dateIso < $programation->start_date->toDateString() || $dateIso > $programation->end_date->toDateString()) {
-                        continue;
-                    }
-
-                    if (!empty($programation->work_days) && !in_array($date->isoWeekday(), $programation->work_days, true)) {
-                        continue;
-                    }
-
-                    $override = $programation->overrides->first(fn ($o) => $o->date === $dateIso);
-                    $workPosition = ($override && $override->work_position_id !== null) ? $override->workPosition : $programation->workPosition;
-
-                    if (!$workPosition) {
-                        continue;
-                    }
-
-                    $isAbsenceReplacement = str_starts_with((string) $programation->group_code, 'absence:');
-                    $grid[$workPosition->attraction][$workPosition->name][$dateIso][] = $isAbsenceReplacement
-                        ? "{$employee->name} (reemplazo)"
-                        : $employee->name;
+            foreach ($days as $date) {
+                $dateIso = $date->toDateString();
+                $coverage = $coverageIndex[$employee->uid][$dateIso] ?? null;
+                $workPosition = $coverage['workPosition'] ?? null;
+                if ($workPosition === null) {
+                    continue;
                 }
+
+                $grid[$workPosition->attraction][$workPosition->name][$dateIso][] = $coverage['isAbsenceReplacement']
+                    ? "{$employee->name} (reemplazo)"
+                    : $employee->name;
             }
         }
 
@@ -535,58 +573,36 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
     }
 
     /**
-     * Modo fijo (sin puestos configurados): agrupa por TURNO (horario) en vez de por
-     * empleado, igual criterio que buildPositionGrid() agrupa por puesto en modo variable.
-     * Cada celda [turno][fecha] trae los nombres de los empleados que tienen ese turno ese
-     * día, separados por coma — así el nombre deja de ocupar su propia fila/columna y pasa a
-     * vivir dentro de la celda del día, como en la hoja de modo variable.
+     * Modo fijo (sin puestos configurados): agrupa por EMPLEADO — mismo criterio que la tabla
+     * de AreaScheduleGrid.tsx (empleados como filas, días como columnas, "X" en el día
+     * programado). Cada celda [nombre][fecha] trae "X" (o "X (reemplazo)" si ese día cubre a
+     * un empleado ausente), sin el horario del turno. Lee de $coverageIndex en vez de
+     * re-derivar la cobertura de cada empleado×día.
      *
-     * @return array<string, array<string, string>> etiqueta de turno => fecha ISO => nombres
+     * @return array<string, array<string, string>> nombre del empleado => fecha ISO => "X" / "X (reemplazo)"
      */
-    private function buildFixedModeGrid(array $days): array
+    private function buildFixedModeGrid(array $days, array $coverageIndex): array
     {
         $grid = [];
 
         foreach ($this->employees as $employee) {
+            // Todos los empleados del área aparecen como fila, incluso sin ningún día
+            // programado ese mes — mismo criterio que la tabla web, que siempre lista todas
+            // las columnas de employees aunque una fila quede vacía.
+            $grid[$employee->name] = $grid[$employee->name] ?? [];
+
             foreach ($days as $date) {
                 $dateIso = $date->toDateString();
-
-                foreach ($employee->programations as $programation) {
-                    if ($dateIso < $programation->start_date->toDateString() || $dateIso > $programation->end_date->toDateString()) {
-                        continue;
-                    }
-
-                    if (!empty($programation->work_days) && !in_array($date->isoWeekday(), $programation->work_days, true)) {
-                        continue;
-                    }
-
-                    $override = $programation->overrides->first(fn ($o) => $o->date === $dateIso);
-                    $calendar = $override?->calendar ?? $programation->calendar;
-
-                    $shiftLabel = ($calendar && $calendar->hora_entrada && $calendar->hora_salida)
-                        ? substr($calendar->hora_entrada, 0, 5) . ' - ' . substr($calendar->hora_salida, 0, 5)
-                        : 'Horario no definido';
-
-                    $isAbsenceReplacement = str_starts_with((string) $programation->group_code, 'absence:');
-                    $grid[$shiftLabel][$dateIso][] = $isAbsenceReplacement
-                        ? "{$employee->name} (reemplazo)"
-                        : $employee->name;
-
-                    // Un empleado no debería tener dos programaciones vigentes el mismo día,
-                    // pero por si acaso, la primera que calce gana y se deja de buscar.
-                    break;
+                $coverage = $coverageIndex[$employee->uid][$dateIso] ?? null;
+                if ($coverage === null) {
+                    continue;
                 }
+
+                $grid[$employee->name][$dateIso] = $coverage['isAbsenceReplacement'] ? 'X (reemplazo)' : 'X';
             }
         }
 
         ksort($grid);
-        foreach ($grid as &$cellsByDate) {
-            ksort($cellsByDate);
-            foreach ($cellsByDate as &$names) {
-                $names = implode(', ', $names);
-            }
-        }
-        unset($cellsByDate, $names);
 
         return $grid;
     }

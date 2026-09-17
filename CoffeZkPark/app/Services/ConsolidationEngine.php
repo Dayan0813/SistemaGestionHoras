@@ -234,8 +234,8 @@ class ConsolidationEngine
         }
     }
 
-
-    /**
+                                  
+    /**                                                        
      * Festivo = domingo o está en tabla holidays
      */
     public function isHoliday(Carbon $date): bool

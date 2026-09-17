@@ -349,26 +349,45 @@ class ProgramationsController extends Controller
                 $validated['end_date']
             );
 
-            foreach ($validated['employees'] as $employeeUid) {
+            // Datos base compartidos por TODO el lote (mismo calendario/puesto para todos los
+            // empleados de este envío) — antes se re-consultaban idénticos por cada empleado
+            // dentro del loop; con lotes de decenas de empleados eran igual número de queries
+            // redundantes devolviendo siempre la misma fila.
+            $calendarId = $validated['calendar_id'];
+            $workPositionId = $validated['work_position_id'] ?? null;
+            $startDate = $validated['start_date'];
+            $endDate = $validated['end_date'];
+            $workDays = $validated['work_days'] ?? null;
 
-                // 1 Datos base (compartidos por todo el lote)
-                $calendarId = $validated['calendar_id'];
-                $workPositionId = $validated['work_position_id'] ?? null;
-                $startDate = $validated['start_date'];
-                $endDate = $validated['end_date'];
-                $workDays = $validated['work_days'] ?? null;
+            $calendar = calendars::where('id', $calendarId)
+                ->where('area_id', $validated['area_id'])
+                ->firstOrFail();
 
-                // 3 Obtener calendario REAL (DE AQUÍ SALE TYPE)
-                $calendar = calendars::where('id', $calendarId)
+            if ($workPositionId) {
+                WorkPosition::where('id', $workPositionId)
                     ->where('area_id', $validated['area_id'])
                     ->firstOrFail();
+            }
 
-                // 4 Validar puesto contra área
-                if ($workPositionId) {
-                    WorkPosition::where('id', $workPositionId)
-                        ->where('area_id', $validated['area_id'])
-                        ->firstOrFail();
-                }
+            // Programaciones existentes de TODOS los empleados del lote que se solapan con el
+            // rango, en una sola query (antes era una query idéntica salvo por employee_uid,
+            // repetida dentro del loop por cada empleado del lote), agrupadas por empleado en
+            // memoria para el chequeo de solapamiento de más abajo.
+            $existingProgramationsByEmployee = Programations::whereIn('employee_uid', $validated['employees'])
+                ->where('area_id', $validated['area_id'])
+                ->where('status', '!=', 'Cancelado')
+                ->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('start_date', [$startDate, $endDate])
+                        ->orWhereBetween('end_date', [$startDate, $endDate])
+                        ->orWhere(function ($q2) use ($startDate, $endDate) {
+                            $q2->where('start_date', '<=', $startDate)
+                                ->where('end_date', '>=', $endDate);
+                        });
+                })
+                ->get()
+                ->groupBy('employee_uid');
+
+            foreach ($validated['employees'] as $employeeUid) {
 
                 // 5 Días reales que cubre este lote para este empleado
                 $newDays = $this->coveredDates($startDate, $endDate, $workDays);
@@ -406,18 +425,7 @@ class ProgramationsController extends Controller
                 // si el empleado cambió de área, sus filas viejas de la otra área no
                 // deben pisarse con el calendar_id/work_position_id de esta área —
                 // esos días quedan como "frescos" y crean una fila nueva aquí abajo.
-                $existingProgramations = Programations::where('employee_uid', $employeeUid)
-                    ->where('area_id', $validated['area_id'])
-                    ->where('status', '!=', 'Cancelado')
-                    ->where(function ($q) use ($startDate, $endDate) {
-                        $q->whereBetween('start_date', [$startDate, $endDate])
-                            ->orWhereBetween('end_date', [$startDate, $endDate])
-                            ->orWhere(function ($q2) use ($startDate, $endDate) {
-                                $q2->where('start_date', '<=', $startDate)
-                                    ->where('end_date', '>=', $endDate);
-                            });
-                    })
-                    ->get();
+                $existingProgramations = $existingProgramationsByEmployee->get($employeeUid) ?? collect();
 
                 $dayToExistingProgramation = [];
                 foreach ($existingProgramations as $existingProgramation) {

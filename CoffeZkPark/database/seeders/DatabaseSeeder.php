@@ -16,6 +16,9 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(PermissionSeeder::class);
+        $this->call(AreaSeeder::class);
+        $this->call(WorkPositionSeeder::class);
+        $this->call(CalendarSeeder::class);
 
         // Empleado + usuario admin de prueba para poder entrar en un entorno recién migrado.
         $employee = Employee::factory()->create([

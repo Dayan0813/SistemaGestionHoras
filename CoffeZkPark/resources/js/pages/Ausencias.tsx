@@ -426,11 +426,15 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
                                         onChange={(e) => setStartDate(e.target.value)}
                                         className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
                                     />
-                                    {startDateOutsideSchedule && (
-                                        <p className="mt-1 flex items-start gap-1 text-xs text-amber-600">
-                                            <AlertTriangle size={13} className="mt-0.5 flex-none" />
-                                            El empleado no tiene turno programado esa fecha.
-                                        </p>
+                                    {loadingSchedule ? (
+                                        <p className="mt-1 text-xs text-gray-400">Consultando turnos del empleado...</p>
+                                    ) : (
+                                        startDateOutsideSchedule && (
+                                            <p className="mt-1 flex items-start gap-1 text-xs text-amber-600">
+                                                <AlertTriangle size={13} className="mt-0.5 flex-none" />
+                                                El empleado no tiene turno programado esa fecha.
+                                            </p>
+                                        )
                                     )}
                                 </div>
                                 <div>
