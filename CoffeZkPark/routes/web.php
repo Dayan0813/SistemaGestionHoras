@@ -112,8 +112,6 @@ Route::middleware('auth')->get('/', function () {
 })->name('inicio');
 
 Route::middleware(['auth', 'role:admin'])->group(function () {
-    Route::get('/holidays/range', [HolidayController::class, 'byRange']);
-
     // Servicios: menú de accesos rápidos para el admin (Dispositivos,
     // Consolidados, Crear Usuario). Varias páginas ya enlazaban aquí con una
     // URL fija ("/Servicios") pero nunca existió la ruta.
@@ -169,6 +167,12 @@ Route::middleware(['auth', 'permission:marcaciones.sincronizar'])->group(functio
 
 Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () {
 
+    // Festivos colombianos por rango de fechas (tabla holidays, ver HolidaySeeder) — el
+    // asistente de Programaciones y el plan de vacaciones los consultan para marcar días no
+    // hábiles. Antes solo era accesible para admin; cualquiera con acceso a programaciones
+    // puede necesitarlos (coordinadores incluidos).
+    Route::get('/holidays/range', [HolidayController::class, 'byRange']);
+
     // Programaciones vista principal
     Route::get('/programaciones', function () {
         $props = ['currentRouteName' => 'programaciones'];
@@ -178,7 +182,7 @@ Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () 
         // área. aux_th no tiene permiso para crear/editar, así que en el
         // frontend eso es lo ÚNICO que ve en esta página.
         $user = auth()->user();
-        if ($user->hasRole('aux_admin_th') || $user->hasRole('aux_th')) {
+        if ($user->hasRole('aux_admin_th') || $user->hasRole('aux_th') || $user->hasRole('admin')) {
             $props['allAreas'] = area::orderBy('nombre')->get(['id', 'nombre']);
         }
 
@@ -215,6 +219,11 @@ Route::middleware(['auth', 'permission:programaciones.ver'])->group(function () 
         '/Programations/export-all',
         [ProgramationsController::class, 'exportAllAreas']
     )->name('programations.exportAllAreas');
+    //Descargar la plantilla Excel en blanco de un area/mes 
+    Route::get(
+        '/Programations/area/{area}/month/template',
+        [ProgramationsController::class, 'downloadTemplate']
+        )->name('programations.downloadTemplate');
 });
 
 Route::middleware(['auth', 'permission:ausencias.ver'])->group(function () {
@@ -318,6 +327,12 @@ Route::middleware(['auth', 'permission:programaciones.crear', 'throttle:300,1'])
     Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
 });
 
+Route::middleware(['auth','permission:programaciones.crear','throttle:20,1'])->group(function (){
+    Route::post(
+        '/Programations/area/{area}/month/template',
+        [ProgramationsController::class,'uploadTemplate'] 
+    )->name('programations.uploadTemplate');
+});
 Route::middleware(['auth', 'permission:programaciones.editar', 'throttle:300,1'])->group(function () {
     Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');
     Route::post('/programations/bulk-override', [ProgramationsController::class, 'bulkOverride'])->name('programations.bulkOverride');
@@ -354,6 +369,7 @@ Route::middleware(['auth', 'permission:consolidados.ver'])->group(function () {
         Route::get('/{uid}/mensual', [WorkConsolidationController::class, 'monthly'])->name('consolidations.monthly');
         Route::get('/{uid}/rango', [WorkConsolidationController::class, 'range'])->name('consolidations.range');
         Route::get('/generator', [WorkConsolidationController::class, 'generator'])->name('consolidations.generator');
+        Route::get('/export', [WorkConsolidationController::class, 'export'])->name('consolidations.export');
     });
 });
 

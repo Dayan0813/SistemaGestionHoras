@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\WorkConsolidationExport;
 use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use App\Models\area;
 use App\Models\Employee;
@@ -321,6 +322,46 @@ class WorkConsolidationController extends Controller
             ],
             'results' => $processed
         ]);
+    }
+
+    // Exportación a Excel del consolidado ya guardado en work_consolidations, respetando el
+    // mismo alcance por área que indexPage() (no-admin queda limitado a su propia área) y los
+    // mismos filtros opcionales de empleado/área que la pantalla usa para paginar.
+
+    public function export(Request $request)
+    {
+        $user = auth()->user();
+        $areaId = $user->hasRole('admin') ? null : $user->employee?->area_id;
+
+        if (!$user->hasRole('admin') && !$areaId) {
+            abort(403, 'Usuario sin empleado asociado');
+        }
+
+        $validated = $request->validate([
+            'employee_uid' => 'nullable|string|exists:employees,uid',
+            'area_id'      => 'nullable|integer|exists:areas,id',
+        ]);
+
+        if ($validated['area_id'] ?? null) {
+            $this->ensureAreaAcces((int) $validated['area_id']);
+        }
+
+        $records = WorkConsolidation::with('employee:uid,name,area_id')
+            ->when($areaId, fn($q) => $q->whereHas('employee', fn($eq) => $eq->where('area_id', $areaId)))
+            ->when($validated['area_id'] ?? null, fn($q) => $q->whereHas('employee', fn($eq) => $eq->where('area_id', $validated['area_id'])))
+            ->when($validated['employee_uid'] ?? null, fn($q) => $q->where('employee_uid', $validated['employee_uid']))
+            ->orderBy('week_start')
+            ->orderBy('employee_uid')
+            ->get();
+
+        $rangeLabel = $records->isNotEmpty()
+            ? $records->min('week_start') . ' a ' . $records->max('week_end')
+            : now()->toDateString();
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new WorkConsolidationExport($records, $rangeLabel),
+            'consolidado-horas-' . now()->format('Y-m-d_His') . '.xlsx'
+        );
     }
 
     /* =======================================================

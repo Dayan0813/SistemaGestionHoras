@@ -220,7 +220,31 @@ class ProgramationsController extends Controller
             $fileName
         );
     }
-
+    public function downloadTemplate(Request $request, int $areaId)
+    {
+        $this->ensureAreaViewAccess($areaId);
+        $validated = $request->validate([
+            'year' => 'required|integer',
+            'month' => 'required|integer|min:1|max:12'
+        ]);
+        $areaModel = area::findOrFail($areaId);
+        $employees =  \App\Services\AreaScheduleQuery::activeEmployees($areaId);
+        $fileName = sprintf(
+            'plantilla-programacion-%s-%d-%02d.xlsx',
+            \Illuminate\Support\Str::slug($areaModel->nombre),
+            $validated['year'],
+            $validated['month']
+        );
+        return \Maatwebsite\Excel\Facades\Excel::download(
+             new \App\Exports\AreaScheduleTemplateExport(
+                $employees,
+                (int) $validated['year'],
+                (int)$validated['month'],
+                $areaModel->nombre,
+             ),
+             $fileName
+        );
+    }
     /**
      * ============================
      *
@@ -531,7 +555,7 @@ class ProgramationsController extends Controller
      * cualquiera insertara, y los dos terminaban asignando el mismo puesto el mismo día.
      * Áreas distintas no se bloquean entre sí (el nombre del lock incluye el area_id).
      */
-    private function withAreaLock(int $areaId, \Closure $callback)
+    public function withAreaLock(int $areaId, \Closure $callback)
     {
         $lockName = "programations_area_{$areaId}";
 
@@ -598,7 +622,7 @@ class ProgramationsController extends Controller
      * Agrupa fechas ISO ordenadas en rangos de días calendario consecutivos
      * (una fila de Programations solo admite un rango simple start/end).
      */
-    private function toContiguousDateRanges(array $sortedDates): array
+    public function toContiguousDateRanges(array $sortedDates): array
     {
         if (empty($sortedDates)) {
             return [];
@@ -840,7 +864,7 @@ class ProgramationsController extends Controller
      * ===========================================
      */
 
-    private function upsertOverride(int $programationId, string $date, int $areaId, int $calendarId, ?int $workPositionId, bool $touchWorkPosition = true): ProgramationOverride
+    public  function upsertOverride(int $programationId, string $date, int $areaId, int $calendarId, ?int $workPositionId, bool $touchWorkPosition = true): ProgramationOverride
     {
         $calendar = calendars::where('id', $calendarId)
             ->where('area_id', $areaId)
@@ -1020,6 +1044,41 @@ class ProgramationsController extends Controller
             'areaId' => $areaModel->id,
             'areaName' => $areaModel->nombre,
             'currentRouteName' => 'areas',
+        ]);
+    }
+    public function uploadTemplate(Request $request, int $areaId )
+    {
+        $this->ensureAreaAcces($areaId);
+        $validated = $request->validate([ 
+            'file' => 'required|file|mimes:xlsx',
+            'year' => 'required|integer',
+            'month' => 'required|integer|min:1|max:12',
+        ]);
+        $import = new \App\Imports\AreaScheduleTemplateImport($areaId, (int) $validated['year'], (int) $validated['month']);
+        try{
+            \Maatwebsite\Excel\Facades\Excel::import($import, $validated['file']);
+        }catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e){
+            report($e);
+            return response()->json(['message' => 'Ocurrio un error inesperado al procesar el archivo. Verifica el formato e intenta de nuevo . '], 500);
+        }
+        if($import -> hasErrors()){
+            return response()->json([
+                'message'=> 'El archivo tiene errores y no se creo nada.Corrigelos y vuelve a subirlos',
+                'errors' => $import->getErrors(),
+
+            ], 422);
+        }
+        $summary = $import->getSummary();
+        return response()->json([
+            'message' => sprintf(
+                'plantilla creada correctamente : %d programacion(es), %d ausencia(s) y %d calendario(s) nuevo(s) creados.',
+                $summary['programations_created'],
+                $summary['absences_created'],
+                $summary['calendars_created'],
+            ),
+            'summary' => $summary,
         ]);
     }
 }

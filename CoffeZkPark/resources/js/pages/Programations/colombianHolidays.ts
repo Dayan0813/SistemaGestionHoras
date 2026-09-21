@@ -1,7 +1,17 @@
+import axios from 'axios';
+
 // Festivos oficiales de Colombia (Ley 51 de 1983 y Ley 35 de 1991 — "Ley Emiliani"): los
 // festivos marcados como "trasladable" se mueven al lunes siguiente si no caen ya en lunes.
 // Solo es referencia visual en el calendario del asistente de Programaciones — no bloquea ni
 // desactiva días automáticamente, el coordinador decide si trabaja ese día o no.
+//
+// colombianHolidayName() es SÍNCRONA (se llama dentro de .map() al pintar celdas de
+// calendario), así que no puede esperar una petición HTTP. Por eso: el cálculo local de abajo
+// sigue siendo el valor inmediato para cualquier año no visto todavía, y por separado
+// fetchHolidaysForYear() trae los festivos REALES de la tabla `holidays` (backend, fuente de
+// verdad — ver App\Support\ColombianHolidays) y los reemplaza en el mismo cache una vez
+// llegan, sin bloquear el primer render. Quien muestra el calendario debe llamar
+// fetchHolidaysForYear(year) al montar/cambiar de año — ver Programaciones.tsx.
 
 const nextMonday = (date: Date): Date => {
     const result = new Date(date.getTime());
@@ -79,12 +89,38 @@ export const colombianHolidaysForYear = (year: number): Map<string, string> => {
 };
 
 // Cache simple por año: el asistente de Programaciones solo muestra 1-2 meses a la vez, así
-// que recalcular por año (en vez de por cada render) es más que suficiente.
+// que recalcular por año (en vez de por cada render) es más que suficiente. Arranca con el
+// cálculo local; fetchHolidaysForYear() lo reemplaza por los festivos reales de la BD cuando
+// llegan (ver comentario de arriba).
 const cache = new Map<number, Map<string, string>>();
+const fetchedYears = new Set<number>();
 
 /** Nombre del festivo en esa fecha ISO ('YYYY-MM-DD'), o null si no es festivo en Colombia. */
 export const colombianHolidayName = (dayISO: string): string | null => {
     const year = Number(dayISO.slice(0, 4));
     if (!cache.has(year)) cache.set(year, colombianHolidaysForYear(year));
     return cache.get(year)!.get(dayISO) ?? null;
+};
+
+// Trae los festivos reales de la tabla `holidays` (backend) para un año y reemplaza el cache
+// local con ellos — silencioso ante error de red (el cálculo local ya sembrado sigue sirviendo
+// de respaldo, mismo criterio que el fallback en App\Support\ColombianHolidays::forYear()).
+// Cada año se pide una sola vez por carga de página.
+export const fetchHolidaysForYear = async (year: number): Promise<void> => {
+    if (fetchedYears.has(year)) return;
+    fetchedYears.add(year);
+
+    try {
+        const { data } = await axios.get<{ holidays: { date: string; name: string }[] }>('/holidays/range', {
+            params: { from: `${year}-01-01`, to: `${year}-12-31` },
+        });
+
+        if (data.holidays.length === 0) return; // BD sin sembrar ese año: se conserva el cálculo local.
+
+        const fromDb = new Map<string, string>();
+        data.holidays.forEach((h) => fromDb.set(h.date, h.name));
+        cache.set(year, fromDb);
+    } catch {
+        // Sin conexión / sin permiso / lo que sea: el cálculo local ya está en cache, no hace falta avisar.
+    }
 };

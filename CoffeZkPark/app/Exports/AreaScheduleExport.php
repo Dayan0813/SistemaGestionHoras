@@ -421,7 +421,9 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
 
                 $sheet->mergeCells("A1:{$lastColumn}1");
                 $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
-                $sheet->getRowDimension(1)->setRowHeight(30);
+                $sheet->getRowDimension(1)->setRowHeight(60);
+                $sheet->getRowDimension(2)->setRowHeight(50);
+
 
                 $sheet->getStyle('A' . self::HEADER_ROW . ':' . $lastColumn . self::HEADER_ROW)
                     ->getFont()->setBold(true)->setSize(11);
@@ -468,8 +470,12 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         // Mismo ancho uniforme que el resto de la hoja (applyGridFormatting) — estas columnas
         // comparten letra con las de la grilla principal, así que deben coincidir.
         for ($col = 1; $col <= $columns; $col++) {
-            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($col))->setWidth(30);
+            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($col))->setWidth(50);
         }
+        for ($row = 3; $row <= $lastDataRow; $row++) {
+         $sheet->getRowDimension($row)->setRowHeight(50);
+         }
+
 
         $range = "A{$headerRow}:{$lastColumn}{$lastDataRow}";
         $sheet->getStyle($range)->getFont()->setSize(11);
@@ -482,8 +488,8 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
     // Alto (puntos) que ocupa cada línea de texto envuelto dentro de una celda con fuente 11,
     // y alto mínimo/base para una fila sin (o con pocos) nombres — valores empíricos para que
     // el wrap no quede cortado ni la fila se vea exageradamente alta de más.
-    private const ROW_LINE_HEIGHT = 15;
-    private const ROW_BASE_HEIGHT = 24;
+    private const ROW_LINE_HEIGHT = 45;
+    private const ROW_BASE_HEIGHT = 45;
 
     /**
      * Formato compartido de la grilla (columnas anchas, filas altas, bordes finos, texto
@@ -503,7 +509,7 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         // Mismo ancho para todas las columnas (etiqueta y días) — evita que UID u otras
         // columnas angostas se vean amontonadas junto a columnas más anchas.
         for ($col = 1; $col <= $lastColumnIndex; $col++) {
-            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($col))->setWidth(30);
+            $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($col))->setWidth(50);
         }
 
         $range = "A{$firstRow}:{$lastColumn}{$lastRow}";

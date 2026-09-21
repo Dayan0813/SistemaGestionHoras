@@ -2,14 +2,16 @@
 
 namespace App\Support;
 
+use App\Models\Holidays;
 use Carbon\Carbon;
 
 /**
- * Festivos oficiales de Colombia (Ley 51 de 1983 y Ley 35 de 1991 — "Ley Emiliani"). Puerto
- * directo del mismo algoritmo ya usado en el frontend
- * (resources/js/pages/Programations/colombianHolidays.ts) — mismos 18 festivos, mismo criterio
- * de traslado al lunes siguiente. Se mantienen sincronizados a mano: cualquier cambio en uno
- * debe reflejarse en el otro.
+ * Festivos oficiales de Colombia (Ley 51 de 1983 y Ley 35 de 1991 — "Ley Emiliani"). Lee de la
+ * tabla `holidays` (ver database/seeders/HolidaySeeder.php) — si un año no tiene NINGÚN festivo
+ * sembrado ahí (seeder no corrido en ese entorno, o año fuera del rango sembrado), cae al mismo
+ * algoritmo de cálculo que antes era la única fuente, para no dejar de funcionar. El frontend
+ * (resources/js/pages/Programations/colombianHolidays.ts) sigue calculando por su cuenta — ver
+ * nota en ese archivo.
  */
 class ColombianHolidays
 {
@@ -35,6 +37,23 @@ class ColombianHolidays
 
     /** @return array<string, bool> */
     private static function forYear(int $year): array
+    {
+        $fromDb = Holidays::whereBetween('date', ["{$year}-01-01", "{$year}-12-31"])
+            ->pluck('date')
+            ->map(fn ($date) => $date->toDateString())
+            ->all();
+
+        if (!empty($fromDb)) {
+            return array_fill_keys($fromDb, true);
+        }
+
+        // Respaldo: tabla vacía para este año (seeder no corrido, o año fuera de rango) — se
+        // calcula igual que antes, en vez de tratar el año como "sin festivos".
+        return self::calculateForYear($year);
+    }
+
+    /** @return array<string, bool> */
+    private static function calculateForYear(int $year): array
     {
         $holidays = [];
         $set = function (Carbon $d) use (&$holidays) {

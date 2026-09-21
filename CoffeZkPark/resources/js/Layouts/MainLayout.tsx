@@ -111,32 +111,6 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         </button>
                     </Link>
                 )}
-                {canAbsences && (
-                    <Link href={route('ausencias')} className="flex-1">
-                        <button
-                            className={`300ms w-full rounded-lg px-1 py-1 transition-all ${
-                                RouteNavbar === 'ausencias'
-                                    ? 'bg-white font-bold text-[#95c020] shadow-md'
-                                    : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
-                            }`}
-                        >
-                            Ausencias
-                        </button>
-                    </Link>
-                )}
-                {canAbsences && (
-                    <Link href={route('plan-vacaciones')} className="flex-1">
-                        <button
-                            className={`300ms w-full rounded-lg px-1 py-1 transition-all ${
-                                RouteNavbar === 'plan-vacaciones'
-                                    ? 'bg-white font-bold text-[#95c020] shadow-md'
-                                    : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
-                            }`}
-                        >
-                            Plan de vacaciones
-                        </button>
-                    </Link>
-                )}
                 {canMarkings && (
 
                     <Link href={route('markinglogs')} className="flex-1">

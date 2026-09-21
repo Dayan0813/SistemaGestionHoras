@@ -161,6 +161,33 @@ class CalendarsController extends Controller
 
         return response()->json($calendar, 201);
     }
+    public function resolveOrCreateCalendar(int $areaId, string $horaEntrada, string $horaSalida , string $shiftType, ?string $createdForEmployeeUid = null): array 
+    {
+        $durationError= $this->shiftDurationError($areaId, $horaEntrada, $horaSalida);
+        if ($durationError !== null){
+            return [null, $durationError];
+        }
+        $calendar = calendars::where('area_id', $areaId)
+        ->where('hora_entrada', $horaEntrada)
+        ->where('hora_salida', $horaSalida)
+        ->where('shift_type', $shiftType)
+        ->where('created_for_employee_uid', $createdForEmployeeUid)
+        ->first();
+
+        if($calendar){
+                return[$calendar , null];
+        }
+        $calendar = calendars::create([
+            'area_id' => $area_id,
+            'hora_entrada' => $horaEntrada,
+            'hora_salida' => $horaSalida,
+            'shift_type'=> $shiftType,
+            'is_custom' => $createdForEmployeeUid !== null,
+            'created_for_employee_uid'=> $createdForEmployeeUid,
+            ]);
+        return [$calendar , null];
+    }
+    
 
     /**
      * ==========================================

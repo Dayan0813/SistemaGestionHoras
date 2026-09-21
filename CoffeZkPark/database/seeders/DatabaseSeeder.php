@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
         $this->call(AreaSeeder::class);
         $this->call(WorkPositionSeeder::class);
         $this->call(CalendarSeeder::class);
+        $this->call(HolidaySeeder::class);
 
         // Empleado + usuario admin de prueba para poder entrar en un entorno recién migrado.
         $employee = Employee::factory()->create([

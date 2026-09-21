@@ -45,12 +45,23 @@ const Servicios = ({ currentRouteName }: CurrentProps) => {
                     </Link>
 
                     {/*Bloque 4*/}
+
+                    <Link href={route('plan-vacaciones')}>
                     <div className="rounded-lg border border-[#a81c24] p-6 text-[#a81c24] shadow-md">
                         <h3 className="mb-3 flex items-center text-xl font-semibold">
-                            En produccion... <Hourglass className="ml-2" />
+                            Plan vacacional <Hourglass className="ml-2" />
                         </h3>
-                        <p className="text-[#a81c24]">Pronto Tendremos Una nueva Vista</p>
+                        <p className="text-[#a81c24]">Registra o lee las vacaciones</p>
                     </div>
+                    </Link>
+                    <Link href={route('ausencias.store')}>
+                    <div className="rounded-lg border border-[#a81c24] p-6 text-[#a81c24] shadow-md">
+                        <h3 className="mb-3 flex items-center text-xl font-semibold">
+                            Novedades<Hourglass className="ml-2" />
+                        </h3>
+                        <p className="text-[#a81c24]">Novedades sobre ausencias </p>
+                    </div>
+                    </Link>
                 </div>
             </div>
         </div>

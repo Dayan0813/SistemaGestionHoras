@@ -57,4 +57,13 @@ class AreaScheduleQuery
             ->orderBy('name')
             ->get(['uid', 'name', 'contrato_id']);
     }
+
+    public static function activeEmployees(int $areaId): Collection
+    {
+        return Employee::query()
+        ->where('area_id', $areaId)
+        ->where('estado','Activo')
+        ->orderBy('name')
+        ->get();
+    }
 }

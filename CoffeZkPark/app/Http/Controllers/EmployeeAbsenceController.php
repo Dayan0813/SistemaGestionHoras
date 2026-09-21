@@ -185,23 +185,19 @@ class EmployeeAbsenceController extends Controller
 
         $this->ensureAreaAcces((int) $absentEmployee->area_id);
 
-        // Vacaciones: solo empleados con derecho a ellas (ningún contrato "temporal", único
+               // Vacaciones: solo empleados con derecho a ellas (ningún contrato "temporal", único
         // catálogo libre sin flag propio — mismo criterio de texto que ya usa el frontend en
-        // contractTextColor()/contractBadgeColor()) y solo hasta el saldo que les queda.
-        $requestedDays = null;
+        // contractTextColor()/contractBadgeColor()). El chequeo de saldo disponible ya no va
+        // aquí — createAbsenceRecord() lo revalida bajo lock de fila, evitando duplicar la
+        // misma validación dos veces con dos resultados potencialmente distintos.
         if ($validated['type'] === 'vacaciones') {
             $absentEmployee->loadMissing('contrato');
             $contratoNombre = strtolower($absentEmployee->contrato?->name ?? '');
             if (str_contains($contratoNombre, 'temporal')) {
                 abort(422, 'Los empleados con contrato temporal no tienen derecho a vacaciones.');
             }
-
-            $requestedDays = Carbon::parse($validated['start_date'])->diffInDays(Carbon::parse($validated['end_date'])) + 1;
-
-            if ($requestedDays > $absentEmployee->dias_vacaciones_disponibles) {
-                abort(422, "El empleado solo tiene {$absentEmployee->dias_vacaciones_disponibles} día(s) de vacaciones disponibles y se solicitaron {$requestedDays}.");
-            }
         }
+
 
         $replacementEmployee = null;
         if (!empty($validated['replacement_employee_uid'])) {
@@ -211,50 +207,14 @@ class EmployeeAbsenceController extends Controller
             }
         }
 
-        $areaId = (int) $absentEmployee->area_id;
-
-        [$absence, $inheritedDays, $skippedForConflict] = $this->withAreaLock($areaId, function () use ($validated, $absentEmployee, $replacementEmployee, $areaId, $requestedDays) {
-            return DB::transaction(function () use ($validated, $absentEmployee, $replacementEmployee, $areaId, $requestedDays) {
-                // Revalida el saldo con el valor FRESCO (bajo lock de fila): el chequeo de
-                // arriba usó el valor cargado antes de esperar el lock de área, que puede
-                // haber quedado stale si otra solicitud para el mismo empleado ya decrementó
-                // mientras esta esperaba turno (dos clics rápidos, dos pestañas).
-                if ($validated['type'] === 'vacaciones') {
-                    $freshEmployee = Employee::where('uid', $absentEmployee->uid)->lockForUpdate()->first();
-                    if ($requestedDays > $freshEmployee->dias_vacaciones_disponibles) {
-                        abort(422, "El empleado solo tiene {$freshEmployee->dias_vacaciones_disponibles} día(s) de vacaciones disponibles y se solicitaron {$requestedDays}.");
-                    }
-                }
-
-                $absence = EmployeeAbsence::create([
-                    'employee_uid' => $absentEmployee->uid,
-                    'area_id' => $areaId,
-                    'type' => $validated['type'],
-                    'start_date' => $validated['start_date'],
-                    'end_date' => $validated['end_date'],
-                    'days' => $requestedDays,
-                    'replacement_employee_uid' => $replacementEmployee?->uid,
-                    'status' => 'Activa',
-                    'notes' => $validated['notes'] ?? null,
-                    'created_by' => auth()->id(),
-                ]);
-
-                if ($validated['type'] === 'vacaciones') {
-                    $absentEmployee->decrement('dias_vacaciones_disponibles', $requestedDays);
-                }
-
-                [$inheritedDays, $skippedForConflict] = $this->createAbsence(
-                    $absence,
-                    $absentEmployee,
-                    $replacementEmployee,
-                    $areaId,
-                    $validated['start_date'],
-                    $validated['end_date'],
-                );
-
-                return [$absence, $inheritedDays, $skippedForConflict];
-            });
-        });
+        [$absence, $inheritedDays, $skippedForConflict] = $this->createAbsenceRecord(
+            $absentEmployee,
+            $validated['type'],
+            $validated['start_date'],
+            $validated['end_date'],
+            $replacementEmployee,
+            $validated['notes'] ?? null,
+        );
 
         if ($skippedForConflict > 0) {
             return $this->respondAbsenceResult(
@@ -662,6 +622,54 @@ class EmployeeAbsenceController extends Controller
 
         return redirect()->route('ausencias')->with($flashKey, $message);
     }
+
+    public function createAbsenceRecord(
+        Employee $absentEmployee,
+        string $type,
+        string $enDate,
+        ?Employee $replacementEmployee = null,
+        ?string $notes = null,
+         ): array {
+            $areaId = (int) $absentEmployee->area_id;
+            $requestDays = $type === 'vacaciones'
+             ? Carbon::parse($startDate)->diffInDays(Carbon::parse($endDate)) + 1 
+             : null;
+             return $this->withAreaLock($areaId, function() use ($absentEmployee, $type, $startDate, $endDate , $replacementEmployee , $notes , $areaId, $requestDays){
+                return DB::transaction(function () use ($absentEmployee, $type, $startDate , $endDate , $replacementEmployee  , $notes , $areaId , $requestDays ){
+                    if (type === 'vacaciones'){
+                        $freshEmployee = Employee::where('uid', $absentEmployee->uid)->lockForUpdate()->first();
+                        if ($requestedDays >$freshEmployee->dias_vacaciones_disponibles){
+                            abort(422,"El empleado {$freshEmployee->name} solo tiene {$freshEmployee->dias_vacacionales_disponibles} dia(s) de vacaciones disponibles y se solicitarion {$requestDays}.");
+                        }
+                }
+                $absence = EmployeeAbsence::create([
+                    'employee_uid' => $absentEmployee->uid,
+                    'area_id' => $areaId,
+                    'type' => $type,
+                    'start_date' => $startDate,
+                    'end_date'=> $endDate,
+                    'days' => $requestDays,
+                    'replacement_emploee_uid ' => $replacementEmployee?->uid,
+                    'status' => 'Activa',
+                    'notes'=> $notes,
+                    'created_by' => auth()->id(),
+                ]);
+
+                if($type === 'vacaciones'){
+                    $absentEmployee->decrement('dias_vacacionales_disponibles', $requestDays);
+                }
+                [$inheritDays, $skippedForConflict] = $this->createAbsence(
+                    $absence,
+                    $absentEmployee,
+                    $replacementEmployee,
+                    $areaid,
+                    $startDate,
+                    $endDate,
+                );
+                return [$absence, $inheritedDays, $skippedForConflict];
+             });
+         });
+         }
 
     public function destroy(EmployeeAbsence $absence)
     {
