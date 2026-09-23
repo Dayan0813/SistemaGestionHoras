@@ -241,6 +241,8 @@ class ProgramationsController extends Controller
                 (int) $validated['year'],
                 (int)$validated['month'],
                 $areaModel->nombre,
+                $areaModel->scheduling_mode,
+                (int) $areaId,
              ),
              $fileName
         );
@@ -1054,7 +1056,8 @@ class ProgramationsController extends Controller
             'year' => 'required|integer',
             'month' => 'required|integer|min:1|max:12',
         ]);
-        $import = new \App\Imports\AreaScheduleTemplateImport($areaId, (int) $validated['year'], (int) $validated['month']);
+        $areaModel = area::findOrFail($areaId);
+        $import = new \App\Imports\AreaScheduleTemplateImport($areaId, (int) $validated['year'], (int) $validated['month'], $areaModel->scheduling_mode);
         try{
             \Maatwebsite\Excel\Facades\Excel::import($import, $validated['file']);
         }catch (\Illuminate\Validation\ValidationException $e) {
@@ -1071,6 +1074,7 @@ class ProgramationsController extends Controller
             ], 422);
         }
         $summary = $import->getSummary();
+        $warnings = $import->getWarnings();
         return response()->json([
             'message' => sprintf(
                 'plantilla creada correctamente : %d programacion(es), %d ausencia(s) y %d calendario(s) nuevo(s) creados.',
@@ -1079,6 +1083,36 @@ class ProgramationsController extends Controller
                 $summary['calendars_created'],
             ),
             'summary' => $summary,
+            'warnings' => $warnings,
+        ]);
+    }
+
+    public function confirmTemplateDraft(Request  $request , int $areaId)
+    {
+        $this->ensureAreaAcces($areaId);
+
+        $uploaded = \App\Models\Programations::where('area_id', $areaId)
+        ->where('status', 'Borrador')
+        ->where('group_code', 'plantilla-excel')
+        ->update(['status' => 'Programado'] );
+
+        return response()->json([
+            'message' => "Se confirmaron {$uploaded} turno(s) de la plantilla.",
+            'updated' => $uploaded,
+        ]);
+    }
+    public function discardTemplateDraft(Request $request , int $areaId)
+    {
+        $this->ensureAreaAcces($areaId);
+
+        $deleted = \App\Models\Programations::where('area_id' , $areaId)
+        ->where('status', 'Borrador')
+        ->where('group_code', 'plantilla-excel')
+        ->delete();
+
+        return response()->json([
+            'message' => "Se descartaron {$deleted} turno(s) de la plantilla.",
+            'deleted' => $deleted,
         ]);
     }
 }

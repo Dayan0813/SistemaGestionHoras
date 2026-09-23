@@ -50,6 +50,7 @@ export default function Programaciones() {
     const [templateFile, setTemplateFile] = useState<File | null>(null);
     const [uploadingTemplate, setUploadingTemplate] = useState(false);
     const [templateResult, setTemplateResult] = useState<{ type: 'success' | 'error'; message: string; errors?: string[] } | null>(null);
+    const [confirmingDraft , setConfirmingDraft] = useState(false);
 
     // Solo llega para aux_admin_th: le permite consultar (solo lectura) lo que subió
     // el coordinador de CUALQUIER área, sin depender de tener un área propia asignada.
@@ -248,7 +249,8 @@ export default function Programaciones() {
             addMonth(new Date());
             Promise.all(
                 [...months.values()].map(({ year, month }) =>
-                    axios.get(route('programations.dinamicDetails', areaId), { params: { year, month } }).then((res) => res.data),
+                    axios.get(route('programations.dinamicDetails', areaId), { params: { year, month } }).then((res) => res.data.employees),
+
                 ),
             ).then((results: EmployeeSchedule[][]) => {
                 const merged: Record<string, EmployeeSchedule> = {};
@@ -260,7 +262,9 @@ export default function Programaciones() {
                 });
                 setScheduleByEmployee(merged);
             })
-            .catch(() => notify('No se pudo cargar la programación del área.'));
+           .catch(() => notify('No se pudo cargar la programación del área.'));
+
+
         },
         [areaId, rangeDates],
     );
@@ -515,14 +519,15 @@ export default function Programaciones() {
         setDeletingCalendar(null);
     };
 
-    const uploadTemplate = async () => {
-        if (!templateFile || !areaId) return;
+    const uploadTemplate = async (file : File) => {
+        console.log('uploadTemplate llamado, areaId =', areaId, 'file =', file.name);
+        if (!areaId) return;
 
         setUploadingTemplate(true);
         setTemplateResult(null);
 
         const formData = new FormData();
-        formData.append('file', templateFile);
+        formData.append('file', file);
         formData.append('year', String(new Date().getFullYear()));
         formData.append('month', String(new Date().getMonth() + 1));
 
@@ -530,6 +535,7 @@ export default function Programaciones() {
             const res = await axios.post(route('programations.uploadTemplate', areaId), formData);
             setTemplateResult({ type: 'success', message: res.data.message });
             setTemplateFile(null);
+            fetchSchedule();
         } catch (err: unknown) {
             const axiosErr = err as { response?: { status?: number; data?: { message?: string; errors?: string[] } } };
             if (axiosErr.response?.status === 422 && axiosErr.response.data?.errors) {
@@ -545,6 +551,37 @@ export default function Programaciones() {
 
         setUploadingTemplate(false);
     };
+    const confirmTemplateDraft = async ()=>{
+        if (!areaId) return;
+        setConfirmingDraft(true);
+    try{
+        const res = await axios.post(route('programations.confirmTemplateDraft', areaId));
+        setTemplateResult(null);
+        notify(res.data.message);
+        fetchSchedule();
+
+    }catch (err: unknown){
+        const axiosErr = err as {response?: {data?: {message ?: string}}};
+        notify(axiosErr.response?.data?.message ?? 'No se pudo confirmar la programacion');
+    }
+    setConfirmingDraft(false);
+
+    };
+
+    const discardTemplateDraft = async() =>{
+        if(!areaId) return;
+        setConfirmingDraft(true);
+        try{
+            const res = await axios.post(route('programations.discardTemplateDraft', areaId));
+            setTemplateResult(null);
+            notify(res.data.message);
+            fetchSchedule();
+        }catch (err: unknown){
+            const axiosErr = err as {response ?: {data?:{ message?: string }}};
+            notify(axiosErr.response?.data?.message ?? ' No se puede descartar la programacion');
+        }
+        setConfirmingDraft(false);
+    }
 
     const createPosition = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -933,26 +970,28 @@ export default function Programaciones() {
                                 <FileSpreadsheet size={14} /> Descargar plantilla
                             </a>
 
-                            <label className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+                            <label
+                                className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold ${
+                                    uploadingTemplate
+                                        ? 'cursor-not-allowed border-gray-300 text-gray-400'
+                                        : 'cursor-pointer border-[#a81c24] text-[#a81c24] hover:bg-[#a81c24] hover:text-white'
+                                }`}
+                            >
                                 <Upload size={14} />
-                                {templateFile ? templateFile.name : 'Elegir plantilla diligenciada'}
+                                {templateFile ? templateFile.name   : 'Elegir plantilla diligenciada'}
                                 <input
                                     type="file"
                                     accept=".xlsx"
                                     className="hidden"
-                                    onChange={(event) => setTemplateFile(event.target.files?.[0] ?? null)}
+                                    disabled={uploadingTemplate}
+                                    onChange={(event) => {
+                                        const file = event.target.files?.[0];
+                                          setTemplateFile(file ?? null);
+                                          if(file) uploadTemplate(file);
+                                          event.target.value = '';
+                                    }}
                                 />
                             </label>
-
-                            <button
-                                type="button"
-                                disabled={!templateFile || uploadingTemplate}
-                                onClick={uploadTemplate}
-                                className="flex items-center gap-1.5 rounded-md bg-[#a81c24] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                                <Upload size={14} />
-                                {uploadingTemplate ? 'Subiendo…' : 'Subir plantilla'}
-                            </button>
                         </div>
                     )}
 
@@ -965,11 +1004,11 @@ export default function Programaciones() {
                             }`}
                         >
                             <p className="font-semibold">{templateResult.message}</p>
-                           {templateResult.errors && templateResult.errors.length > 0 && (
-                          <p className="mt-1">
-                           Se encontraron {templateResult.errors.length} error(es) en el archivo. Revisa el formato de las celdas de horario/código.
-                         </p>
-                            ) }
+                            {templateResult.errors && templateResult.errors.length > 0 && (
+                                <p className="mt-1">
+                                    Se encontraron {templateResult.errors.length} error(es) en el archivo. Revisa el formato de las celdas de horario/código.
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1002,6 +1041,36 @@ export default function Programaciones() {
                 </div>
             </header>
 
+            {templateResult?.type === 'success' && areaId && (
+                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                        <p className="m-0 text-xs font-bold tracking-widest text-gray-400 uppercase">Programación resultante</p>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                disabled={confirmingDraft}
+                                onClick={discardTemplateDraft}
+                                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                                Descartar
+                            </button>
+                            <button
+                                type="button"
+                                disabled={confirmingDraft}
+                                onClick={confirmTemplateDraft}
+                                className="rounded-md bg-[#95c020] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#7ea019] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                                {confirmingDraft ? 'Procesando…' : 'Confirmar programación'}
+                            </button>
+                        </div>
+                    </div>
+                    <p className="mb-3 text-xs text-gray-500">
+                        Los turnos marcados como <span className="font-semibold text-gray-600">Borrador</span> todavía no son definitivos. Revísalos y confirma o descarta.
+                    </p>
+                    <AreaScheduleGrid areaId={areaId} />
+                </div>
+            )}
+
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <p className="m-0 text-sm text-gray-700">
                     {pendingCount > 0 ? (
@@ -1020,12 +1089,15 @@ export default function Programaciones() {
                     >
                     </button>
                     <button
-                        disabled={!pendingCount || !!savingProgress}
-                        onClick={uploadDraft}
+                        disabled={(!pendingCount && !templateFile) || !!savingProgress || uploadingTemplate}
+                        onClick={() =>{
+                            if(templateFile) uploadTemplate(templateFile);
+                            if(pendingCount) uploadDraft();
+                        }}
                         className="flex items-center gap-1.5 rounded-md bg-[#a81c24] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         <Upload size={14} />
-                        {savingProgress ? `Subiendo ${savingProgress.done + 1}/${savingProgress.total}…` : 'Subir programación'}
+                        {savingProgress ? `Subiendo ${savingProgress.done + 1}/${savingProgress.total}…` : uploadingTemplate ? 'Subiendo plantilla ...' : 'subir programacion '} 
                     </button>
                 </div>
             </div>

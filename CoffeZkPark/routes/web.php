@@ -332,6 +332,17 @@ Route::middleware(['auth','permission:programaciones.crear','throttle:20,1'])->g
         '/Programations/area/{area}/month/template',
         [ProgramationsController::class,'uploadTemplate'] 
     )->name('programations.uploadTemplate');
+
+Route::post(
+    '/Programations/area/{area}/template/confirm',
+    [ProgramationsController::class, 'confirmTemplateDraft']
+)->name('programations.confirmTemplateDraft');
+
+Route::post(
+    '/Programations/area/{area}/template/discard',
+    [ProgramationsController::class, 'discardTemplateDraft']
+)->name('programations.discardTemplateDraft');
+
 });
 Route::middleware(['auth', 'permission:programaciones.editar', 'throttle:300,1'])->group(function () {
     Route::put('/programations/{programation}', [ProgramationsController::class, 'update'])->name('programations.update');

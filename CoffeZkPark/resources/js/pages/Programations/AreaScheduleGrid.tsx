@@ -77,6 +77,7 @@ interface DayAssignment {
     contrato?: Contrato | null;
     calendar: Calendar;
     isAbsenceReplacement: boolean;
+    isDraft:boolean;
 }
 
 // Índice 0 sin usar: 1=Lunes ... 7=Domingo, igual convención que Carbon::dayOfWeekIso en el backend.
@@ -155,11 +156,16 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
         return wd === 6 || wd === 7;
     };
 
-    const coversDate = (p: Programation, dayISO: string) => {
-        if (dayISO < p.start_date.slice(0, 10) || dayISO > p.end_date.slice(0, 10)) return false;
-        if (!p.work_days || p.work_days.length === 0) return true;
-        return p.work_days.includes(isoWeekday(dayISO));
-    };
+   const coversDate = (p: Programation, dayISO: string) => {
+    // Un override puntual para esta fecha cubre el día aunque caiga fuera del rango original
+    // start_date/end_date de la fila (ver upsertOverride en el backend — un Excel/edición puede
+    // agregar una excepción para un día que la fila base no cubría todavía).
+    if (p.overrides?.some((o) => o.date === dayISO)) return true;
+    if (dayISO < p.start_date.slice(0, 10) || dayISO > p.end_date.slice(0, 10)) return false;
+    if (!p.work_days || p.work_days.length === 0) return true;
+    return p.work_days.includes(isoWeekday(dayISO));
+};
+
 
     // employeeUid|dayISO -> programación que cubre ese día, precalculado UNA vez por
     // employees/days (antes cada celda de la tabla llamaba a employee.programations.find(),
@@ -202,6 +208,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
     // true si esta fila de programación fue creada por una ausencia (vacaciones/incapacidad)
     // para que este empleado cubra a otro — ver EmployeeAbsenceController::store().
     const isAbsenceReplacement = (programation: Programation) => (programation.group_code ?? '').startsWith('absence:');
+    const isDraft = (programation : Programation ) => programation.status === 'Borrador' ;
 
     // Índice invertido: de "por empleado, qué puesto" a "por puesto, qué empleado(s)" — un
     // puesto puede tener más de una persona el mismo día, así que cada celda es una lista.
@@ -230,6 +237,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                         contrato: employee.contrato,
                         calendar: getCalendarForDay(programation, dayISO),
                         isAbsenceReplacement: isAbsenceReplacement(programation),
+                        isDraft: isDraft(programation),
                     });
                     cells.set(key, list);
                 }
@@ -466,7 +474,9 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => setProfileUid(a.employeeUid)}
-                                                                    className="block min-w-0 flex-1 truncate text-left text-sm font-semibold text-gray-900 hover:text-[#a81c24] hover:underline"
+                                                                    className={`block min-w-0 flex-1 truncate text-left text-sm font-semibold hover:text-[#a81c24] hover:underline ${
+                                                                        a.isDraft ? 'text-gray-400 italic' : 'text-gray-900'
+                                                                    }`}
                                                                 >
                                                                     {a.employeeName}
                                                                 </button>
@@ -482,6 +492,14 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                                         className={`flex-none rounded-full px-1.5 py-0.5 text-[8px] font-semibold whitespace-nowrap ${contractBadgeColor(a.contrato.name)}`}
                                                                     >
                                                                         {a.contrato.name}
+                                                                    </span>
+                                                                )}
+                                                                {a.isDraft && (
+                                                                    <span
+                                                                        title="Turno en borrador, todavía sin confirmar"
+                                                                        className="flex-none rounded-full bg-gray-100 px-1.5 py-0.5 text-[8px] font-semibold whitespace-nowrap text-gray-500"
+                                                                    >
+                                                                        Borrador
                                                                     </span>
                                                                 )}
                                                                 {a.isAbsenceReplacement && (
@@ -501,6 +519,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                     })}
                                 </tr>
                             ))}
+
                         </tbody>
                     </table>
                 </div>
@@ -597,6 +616,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                             const programation = getProgramationForDay(employee, dayISO);
                                             const tooltip = isFirstOverageDay(employee.uid, dayISO) ? overageTooltip(employee.uid) : null;
                                             const replacement = programation ? isAbsenceReplacement(programation) : false;
+                                            const draft = programation ? isDraft(programation):false;
 
                                             return (
                                                 <td
@@ -605,14 +625,16 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                 >
                                                     {programation && (
                                                         <span
-                                                            className={`inline-flex items-center gap-1 font-bold ${replacement ? 'text-sky-600' : 'text-[#a81c24]'}`}
-                                                            title={replacement ? 'Cubre a un empleado ausente (vacaciones/incapacidad)' : undefined}
+                                                            className={`inline-flex items-center gap-1 font-bold ${
+                                                                draft? 'text-gray-400 underline decoration-dashed' : replacement ? 'text-sky-600 ' : 'text[#a81c24]'
+                                                                }`}
+                                                            title={draft ? 'Turno en borrador , todavia sin confirmar' : replacement ? 'Cubre a un empleado ausente (vacaciones/incapacidad)' : undefined }
                                                         >
-                                                            X
+                                                            {draft ? 'X?' : 'X'}
                                                             {tooltip && (
-                                                                <span title={tooltip} className="text-[#a81c24]">
-                                                                    <AlertTriangle size={12} />
-                                                                </span>
+                                                              <span title={tooltip} className="text-[#a81c24]">
+                                                                <AlertTriangle size={12} />
+                                                              </span>
                                                             )}
                                                         </span>
                                                     )}
