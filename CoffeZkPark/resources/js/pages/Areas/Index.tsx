@@ -1,6 +1,6 @@
 import { Link, usePage } from '@inertiajs/react';
 import axios from 'axios';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import CreateAreaModal from './CreateAreaModal';
 
@@ -47,51 +47,12 @@ const formatRangeLabel = (range: HighSeasonRange) => {
 export default function Index({
     areas,
     eligibleEmployees,
-    highSeasonRanges: initialHighSeasonRanges,
+    highSeasonRanges,
     vacationReminderMonths: initialVacationReminderMonths,
 }: Props) {
     const [showCreate, setShowCreate] = useState(false);
     const { flash, auth } = usePage().props as unknown as { flash?: { success?: string }; auth?: { user?: { permissions?: string[] } } };
     const canManageAreas = auth?.user?.permissions?.includes('areas.gestionar') ?? false;
-
-    // Rangos de fechas de temporada alta, GLOBAL para toda la empresa: dentro de esos rangos no
-    // aplica el recorte de horario corto de lunes/martes en áreas de jornada fija. Se configura
-    // una sola vez aquí (no área por área) y aplica a todas. Rangos exactos (no meses completos)
-    // porque la temporada alta puede empezar/terminar a mitad de mes.
-    const [highSeasonRanges, setHighSeasonRanges] = useState<HighSeasonRange[]>(initialHighSeasonRanges);
-    const [savingHighSeason, setSavingHighSeason] = useState(false);
-    const [newRangeStart, setNewRangeStart] = useState('');
-    const [newRangeEnd, setNewRangeEnd] = useState('');
-    const [rangeError, setRangeError] = useState<string | null>(null);
-
-    const saveRanges = (next: HighSeasonRange[]) => {
-        const previous = highSeasonRanges;
-        setHighSeasonRanges(next);
-        setSavingHighSeason(true);
-        axios
-            .put(route('areas.updateHighSeasonRanges'), { high_season_ranges: next })
-            .catch(() => setHighSeasonRanges(previous))
-            .finally(() => setSavingHighSeason(false));
-    };
-
-    const addRange = () => {
-        setRangeError(null);
-        if (!newRangeStart || !newRangeEnd) {
-            setRangeError('Elige fecha de inicio y de fin.');
-            return;
-        }
-        if (newRangeEnd < newRangeStart) {
-            setRangeError('La fecha de fin no puede ser antes que la de inicio.');
-            return;
-        }
-        saveRanges([...highSeasonRanges, { start: newRangeStart, end: newRangeEnd }].sort((a, b) => a.start.localeCompare(b.start)));
-        setNewRangeStart('');
-        setNewRangeEnd('');
-    };
-
-    const removeRange = (index: number) => {
-        saveRanges(highSeasonRanges.filter((_, i) => i !== index));
-    };
 
     // Meses de anticipación con que se avisa a un coordinador que una reserva de mes de
     // vacaciones (sin fechas todavía) ya necesita fechas exactas — ver PlanVacaciones.tsx.
@@ -128,62 +89,31 @@ export default function Index({
                 <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
                     <p className="text-sm font-semibold text-gray-900">Temporada alta (global)</p>
                     <p className="mt-1 mb-3 text-xs text-gray-500">
-                        Aplica a todas las áreas de jornada fija: dentro de estos rangos de fechas NO rige el horario corto de lunes (hasta medio día)
-                        y martes (hasta las 4:00pm) — esa política solo aplica en temporada baja. Agrega rangos exactos (pueden empezar o terminar a
-                        mitad de mes).
+                        Se define en el Calendario operativo: los días cuyo tipo está marcado como "Temporada alta" (por ejemplo, C). Dentro de la
+                        temporada alta no rige el horario corto de lunes (hasta medio día) y martes (hasta las 4:00pm) de las áreas de jornada fija.
                     </p>
 
-                    {highSeasonRanges.length > 0 && (
+                    {highSeasonRanges.length > 0 ? (
                         <ul className="mb-3 space-y-1.5">
-                            {highSeasonRanges.map((range, index) => (
+                            {highSeasonRanges.map((range) => (
                                 <li
                                     key={`${range.start}-${range.end}`}
-                                    className="flex items-center justify-between rounded-lg bg-[#eaf3d3] px-3 py-2 text-xs font-semibold text-[#5e7a15]"
+                                    className="rounded-lg bg-[#eaf3d3] px-3 py-2 text-xs font-semibold text-[#5e7a15]"
                                 >
                                     {formatRangeLabel(range)}
-                                    <button
-                                        type="button"
-                                        disabled={savingHighSeason}
-                                        onClick={() => removeRange(index)}
-                                        className="text-[#5e7a15] hover:text-[#a81c24] disabled:cursor-not-allowed disabled:opacity-60"
-                                        title="Quitar rango"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
                                 </li>
                             ))}
                         </ul>
+                    ) : (
+                        <p className="mb-3 text-xs text-gray-400">Todavía no hay días de temporada alta en el calendario operativo.</p>
                     )}
 
-                    <div className="flex flex-wrap items-end gap-2">
-                        <label className="text-xs font-semibold text-gray-500">
-                            Desde
-                            <input
-                                type="date"
-                                value={newRangeStart}
-                                onChange={(e) => setNewRangeStart(e.target.value)}
-                                className="mt-1 block rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-800"
-                            />
-                        </label>
-                        <label className="text-xs font-semibold text-gray-500">
-                            Hasta
-                            <input
-                                type="date"
-                                value={newRangeEnd}
-                                onChange={(e) => setNewRangeEnd(e.target.value)}
-                                className="mt-1 block rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-800"
-                            />
-                        </label>
-                        <button
-                            type="button"
-                            disabled={savingHighSeason}
-                            onClick={addRange}
-                            className="rounded-md bg-[#a81c24] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            Agregar rango
-                        </button>
-                    </div>
-                    {rangeError && <p className="mt-2 text-xs text-red-600">{rangeError}</p>}
+                    <Link
+                        href={route('operatingCalendar.index')}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-[#a81c24] px-3 py-1.5 text-xs font-bold text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
+                    >
+                        Configurar en el Calendario operativo
+                    </Link>
                 </div>
             )}
 

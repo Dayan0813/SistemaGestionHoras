@@ -42,8 +42,8 @@ class WorkConsolidationController extends Controller
 
         $employees = Employee::with('area:id,nombre')
             ->when($areaId, fn($q) => $q->where('area_id', $areaId))
-            ->select('uid', 'name', 'area_id')
-            ->orderBy('name')
+            ->select('uid', 'nombres', 'apellidos', 'area_id')
+            ->orderByName()
             ->get();
 
         $areas = area::select('id', 'nombre')
@@ -141,8 +141,8 @@ class WorkConsolidationController extends Controller
 
         $employees = Employee::with('area:id,nombre')
             ->when($areaId, fn($q) => $q->where('area_id', $areaId))
-            ->select('uid', 'name', 'area_id')
-            ->orderBy('name')
+            ->select('uid', 'nombres', 'apellidos', 'area_id')
+            ->orderByName()
             ->get();
 
         $areas = area::select('id', 'nombre')
@@ -346,7 +346,7 @@ class WorkConsolidationController extends Controller
             $this->ensureAreaAcces((int) $validated['area_id']);
         }
 
-        $records = WorkConsolidation::with('employee:uid,name,area_id')
+        $records = WorkConsolidation::with('employee:uid,nombres,apellidos,area_id')
             ->when($areaId, fn($q) => $q->whereHas('employee', fn($eq) => $eq->where('area_id', $areaId)))
             ->when($validated['area_id'] ?? null, fn($q) => $q->whereHas('employee', fn($eq) => $eq->where('area_id', $validated['area_id'])))
             ->when($validated['employee_uid'] ?? null, fn($q) => $q->where('employee_uid', $validated['employee_uid']))

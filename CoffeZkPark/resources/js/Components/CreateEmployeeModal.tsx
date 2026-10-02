@@ -12,7 +12,8 @@ interface Props {
 }
 
 const emptyForm = {
-    name: '',
+    nombres: '',
+    apellidos: '',
     userid: '',
     cardno: '',
     estado: 'Activo',
@@ -71,17 +72,29 @@ export default function CreateEmployeeModal({ isOpen, onClose, areas, cargo, con
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium">Nombre</label>
+                            <label className="block text-sm font-medium">Nombres</label>
                             <input
                                 type="text"
-                                name="name"
-                                value={formData.name}
+                                name="nombres"
+                                value={formData.nombres}
                                 onChange={handleChange}
                                 className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
                                 autoFocus
                                 required
                             />
-                            {errors.name && <p className="mt-1 text-xs text-red-600">{errors.name}</p>}
+                            {errors.nombres && <p className="mt-1 text-xs text-red-600">{errors.nombres}</p>}
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium">Apellidos</label>
+                            <input
+                                type="text"
+                                name="apellidos"
+                                value={formData.apellidos}
+                                onChange={handleChange}
+                                className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
+                            />
+                            {errors.apellidos && <p className="mt-1 text-xs text-red-600">{errors.apellidos}</p>}
                         </div>
 
                         <div>

@@ -50,7 +50,10 @@ const EditEmployeeModal = ({ isOpen, onClose, employee, areas, cargo, contrato }
             setFormData({
                 uid: employee.uid ?? '',
                 userid: employee.userid ?? '',
-                name: employee.name ?? '',
+                // Empleados de antes de separar nombres y apellidos: se precarga el nombre
+                // completo en "Nombres" para que quien edite lo separe.
+                nombres: employee.nombres ?? (employee.apellidos ? '' : (employee.name ?? '')),
+                apellidos: employee.apellidos ?? '',
                 cardno: employee.cardno ?? '',
                 estado: employee.estado ?? '',
                 documentos: employee.documentos ?? '',
@@ -129,16 +132,27 @@ const EditEmployeeModal = ({ isOpen, onClose, employee, areas, cargo, contrato }
                             />
                         </div>
 
-                        {/* Name */}
+                        {/* Nombres y apellidos (el nombre completo se arma solo) */}
                         <div>
-                            <label className="block text-sm font-medium">Nombre</label>
+                            <label className="block text-sm font-medium">Nombres</label>
                             <input
                                 type="text"
-                                name="name"
-                                value={formData.name}
+                                name="nombres"
+                                value={formData.nombres}
                                 onChange={handleChange}
                                 className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
                                 required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium">Apellidos</label>
+                            <input
+                                type="text"
+                                name="apellidos"
+                                value={formData.apellidos}
+                                onChange={handleChange}
+                                className="w-full rounded border px-3 py-2 focus:ring-2 focus:ring-[#a81c24]"
                             />
                         </div>
 

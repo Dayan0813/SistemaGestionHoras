@@ -139,7 +139,7 @@ class ProgramationsController extends Controller
 
         return response()->json([
             'employees' => $employees,
-            'high_season_ranges' => \App\Models\CompanySetting::get('high_season_ranges', []),
+            'high_season_ranges' => \App\Services\OperatingCalendar::highSeasonRanges(),
         ]);
     }
 
@@ -165,16 +165,20 @@ class ProgramationsController extends Controller
         $validated = $request->validate([
             'year' => 'required|integer',
             'month' => 'required|integer|min:1|max:12',
+            // Opcional: cualquier fecha de la semana a exportar (se toma de lunes a domingo).
+            'week_start' => 'nullable|date',
         ]);
 
         $areaModel = area::findOrFail($areaId);
-        $employees = \App\Services\AreaScheduleQuery::forMonth($areaId, $validated['year'], $validated['month']);
+        $weekStart = $this->normalizeWeekStart($validated['week_start'] ?? null);
+        $employees = $weekStart !== null
+            ? \App\Services\AreaScheduleQuery::forRange($areaId, $weekStart, Carbon::parse($weekStart)->addDays(6)->toDateString())
+            : \App\Services\AreaScheduleQuery::forMonth($areaId, $validated['year'], $validated['month']);
 
         $fileName = sprintf(
-            'programacion-%s-%d-%02d.xlsx',
+            'programacion-%s-%s.xlsx',
             \Illuminate\Support\Str::slug($areaModel->nombre),
-            $validated['year'],
-            $validated['month']
+            $this->exportPeriodSlug($validated, $weekStart)
         );
 
         return \Maatwebsite\Excel\Facades\Excel::download(
@@ -183,8 +187,9 @@ class ProgramationsController extends Controller
                 (int) $validated['year'],
                 (int) $validated['month'],
                 $areaModel->nombre,
-                highSeasonRanges: \App\Models\CompanySetting::get('high_season_ranges', []),
+                highSeasonRanges: \App\Services\OperatingCalendar::highSeasonRanges(),
                 areaId: (int) $areaId,
+                weekStart: $weekStart,
             ),
             $fileName
         );
@@ -211,38 +216,65 @@ class ProgramationsController extends Controller
         $validated = $request->validate([
             'year' => 'required|integer',
             'month' => 'required|integer|min:1|max:12',
+            // Opcional: cualquier fecha de la semana a exportar (se toma de lunes a domingo).
+            'week_start' => 'nullable|date',
         ]);
 
-        $fileName = sprintf('programacion-todas-las-areas-%d-%02d.xlsx', $validated['year'], $validated['month']);
+        $weekStart = $this->normalizeWeekStart($validated['week_start'] ?? null);
+        $fileName = sprintf('programacion-todas-las-areas-%s.xlsx', $this->exportPeriodSlug($validated, $weekStart));
 
         return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\AllAreasScheduleExport((int) $validated['year'], (int) $validated['month']),
+            new \App\Exports\AllAreasScheduleExport((int) $validated['year'], (int) $validated['month'], $weekStart),
             $fileName
         );
+    }
+
+    /** Lunes (Y-m-d) de la semana que contiene $date, o null para exportar el mes completo. */
+    private function normalizeWeekStart(?string $date): ?string
+    {
+        return $date ? Carbon::parse($date)->startOfWeek(Carbon::MONDAY)->toDateString() : null;
+    }
+
+    /** "2026-10" para un mes, "semana-2026-09-28" para una semana — parte del nombre del archivo. */
+    private function exportPeriodSlug(array $validated, ?string $weekStart): string
+    {
+        return $weekStart !== null
+            ? "semana-{$weekStart}"
+            : sprintf('%d-%02d', $validated['year'], $validated['month']);
     }
     public function downloadTemplate(Request $request, int $areaId)
     {
         $this->ensureAreaViewAccess($areaId);
         $validated = $request->validate([
-            'year' => 'required|integer',
-            'month' => 'required|integer|min:1|max:12'
+            'year' => 'required_without:start_date|integer',
+            'month' => 'required_without:start_date|integer|min:1|max:12',
+            // Período elegido en la pantalla (Desde + Duración): la plantilla empieza ese día.
+            'start_date' => 'nullable|date_format:Y-m-d',
+            'days' => 'nullable|required_with:start_date|integer|min:1|max:62',
         ]);
         $areaModel = area::findOrFail($areaId);
         $employees =  \App\Services\AreaScheduleQuery::activeEmployees($areaId);
+        // El período va siempre de lunes a domingo, igual que en la pantalla.
+        $startDate = isset($validated['start_date'])
+            ? \Carbon\Carbon::parse($validated['start_date'])->startOfWeek(\Carbon\Carbon::MONDAY)->toDateString()
+            : null;
+        $year = $startDate ? (int) substr($startDate, 0, 4) : (int) $validated['year'];
+        $month = $startDate ? (int) substr($startDate, 5, 2) : (int) $validated['month'];
         $fileName = sprintf(
-            'plantilla-programacion-%s-%d-%02d.xlsx',
+            'plantilla-programacion-%s-%s.xlsx',
             \Illuminate\Support\Str::slug($areaModel->nombre),
-            $validated['year'],
-            $validated['month']
+            $startDate ?? sprintf('%d-%02d', $year, $month),
         );
         return \Maatwebsite\Excel\Facades\Excel::download(
              new \App\Exports\AreaScheduleTemplateExport(
                 $employees,
-                (int) $validated['year'],
-                (int)$validated['month'],
+                $year,
+                $month,
                 $areaModel->nombre,
                 $areaModel->scheduling_mode,
                 (int) $areaId,
+                $startDate,
+                isset($validated['days']) ? (int) $validated['days'] : null,
              ),
              $fileName
         );
@@ -254,6 +286,77 @@ class ProgramationsController extends Controller
      *
      * ============================
      */
+
+    /**
+     * ===========================================
+     *
+     *  Validar el borrador completo de la pantalla de Programaciones antes de subirlo
+     *  (fijos con su mínimo semanal, temporales solo cubriendo faltantes — ver
+     *  WeeklyStaffingValidator). El borrador se sube después bloque por bloque con store(),
+     *  así que la regla semanal solo se puede revisar aquí, con todos los bloques juntos.
+     *
+     * ===========================================
+     */
+    public function validateDraft(Request $request)
+    {
+        $user = auth()->user();
+
+        $validated = $request->validate([
+            'area_id' => 'required|exists:areas,id',
+            'batches' => 'required|array|min:1',
+            'batches.*.calendar_id' => 'required|exists:calendars,id',
+            'batches.*.start_date' => 'required|date',
+            'batches.*.end_date' => 'required|date',
+            'batches.*.employees' => 'required|array|min:1',
+            'batches.*.employees.*' => 'string',
+            'batches.*.work_days' => 'nullable|array',
+            'batches.*.work_days.*' => 'integer|between:1,7',
+        ]);
+
+        // Mismo criterio de área que store().
+        $areaId = (int) $validated['area_id'];
+        if (($user->hasRole('coordinator') || $user->hasRole('aux_admin_th')) && $user->employee?->area_id) {
+            $areaId = (int) $user->employee->area_id;
+        }
+        $this->ensureAreaAcces($areaId);
+
+        $calendarsById = calendars::whereIn('id', array_column($validated['batches'], 'calendar_id'))->get()->keyBy('id');
+        $overlay = [];
+        $from = null;
+        $to = null;
+        foreach ($validated['batches'] as $batch) {
+            $calendar = $calendarsById->get($batch['calendar_id']);
+            $workDays = $batch['work_days'] ?? [];
+            foreach (\Carbon\CarbonPeriod::create($batch['start_date'], $batch['end_date']) as $date) {
+                if (!empty($workDays) && !in_array($date->isoWeekday(), $workDays, true)) {
+                    continue;
+                }
+                foreach ($batch['employees'] as $uid) {
+                    $overlay[$uid][$date->toDateString()] = [
+                        'type' => 'shift',
+                        'hora_entrada' => $calendar?->hora_entrada,
+                        'hora_salida' => $calendar?->hora_salida,
+                    ];
+                }
+            }
+            $from = min($from ?? $batch['start_date'], $batch['start_date']);
+            $to = max($to ?? $batch['end_date'], $batch['end_date']);
+        }
+
+        // Semanas completas (lunes a domingo) que toca el borrador: los días de esas semanas que
+        // el borrador no trae se toman de lo ya guardado.
+        $issues = \App\Services\WeeklyStaffingValidator::validate(
+            $areaId,
+            Carbon::parse($from)->startOfWeek(Carbon::MONDAY)->toDateString(),
+            Carbon::parse($to)->endOfWeek(Carbon::SUNDAY)->toDateString(),
+            $overlay,
+        );
+
+        return response()->json([
+            'errors' => array_column($issues, 'message'),
+            'issues' => $issues,
+        ]);
+    }
 
     public function store(Request $request)
     {
@@ -516,7 +619,7 @@ class ProgramationsController extends Controller
 
 
         if (!empty($skippedEmployees)) {
-            $skippedNames = Employee::whereIn('uid', $skippedEmployees)->pluck('name')->implode(', ');
+            $skippedNames = Employee::whereIn('uid', $skippedEmployees)->get(['nombres', 'apellidos'])->pluck('name')->implode(', ');
 
             return redirect()
                 ->route('programaciones')
@@ -524,7 +627,7 @@ class ProgramationsController extends Controller
         }
 
         if (!empty($skippedForPositionConflict)) {
-            $skippedNames = Employee::whereIn('uid', $skippedForPositionConflict)->pluck('name')->implode(', ');
+            $skippedNames = Employee::whereIn('uid', $skippedForPositionConflict)->get(['nombres', 'apellidos'])->pluck('name')->implode(', ');
 
             return redirect()
                 ->route('programaciones')
@@ -952,7 +1055,7 @@ class ProgramationsController extends Controller
         return response()->json(
             $query
                 ->with(['cargo', 'contrato'])
-                ->orderBy('name')
+                ->orderByName()
                 ->get()
         );
     }
@@ -989,7 +1092,7 @@ class ProgramationsController extends Controller
             $search = $validated['search'];
 
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'LIKE', "%{$search}%")
+                $q->whereNameLike($search)
                     ->orWhere('uid', 'LIKE', "{$search}%");
             });
         }
@@ -997,35 +1100,12 @@ class ProgramationsController extends Controller
         // Retorno del filtro en json 
         return response()->json([
             $query
-                ->select('uid', 'name', 'area_id', 'contrato_id')
+                ->select('uid', 'nombres', 'apellidos', 'area_id', 'contrato_id')
                 ->with(['contrato:id,name'])
-                ->orderBy('name')
+                ->orderByName()
                 ->limit($validated['limit'] ?? 50)
                 ->get()
         ]);
-    }
-
-    /**
-     * ==========================================================
-     *
-     *  Acceso de SOLO LECTURA a la programación de un área.
-     *  aux_admin_th y aux_th pueden consultar lo que subieron los
-     *  coordinadores de CUALQUIER área (para el filtro de áreas
-     *  en /programaciones); el resto de roles conserva la
-     *  restricción a su propia área definida en ensureAreaAcces.
-     *
-     * ==========================================================
-     */
-
-    private function ensureAreaViewAccess(int $areaId): void
-    {
-        $user = auth()->user();
-
-        if ($user->hasRole('aux_admin_th') || $user->hasRole('aux_th')) {
-            return;
-        }
-
-        $this->ensureAreaAcces($areaId);
     }
 
     /**
@@ -1055,13 +1135,37 @@ class ProgramationsController extends Controller
             'file' => 'required|file|mimes:xlsx',
             'year' => 'required|integer',
             'month' => 'required|integer|min:1|max:12',
+            // Áreas variables: la plantilla no trae horarios, todos los turnos usan este calendario.
+            'calendar_id' => [
+                \Illuminate\Validation\Rule::requiredIf(fn () => area::find($areaId)?->scheduling_mode === 'variable'),
+                'nullable',
+                'integer',
+                \Illuminate\Validation\Rule::exists('calendars', 'id')->where('area_id', $areaId),
+            ],
+            // Áreas fijas: horario de cada turno (Apertura, Normal, Cierre); la importación avisa si se usa uno sin elegirlo.
+            'shift_calendars' => ['nullable', 'array:' . implode(',', \App\Exports\AreaScheduleTemplateExport::SHIFT_NAMES)],
+            'shift_calendars.*' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('calendars', 'id')->where('area_id', $areaId)],
         ]);
         $areaModel = area::findOrFail($areaId);
-        $import = new \App\Imports\AreaScheduleTemplateImport($areaId, (int) $validated['year'], (int) $validated['month'], $areaModel->scheduling_mode);
+        $import = new \App\Imports\AreaScheduleTemplateImport(
+            $areaId,
+            (int) $validated['year'],
+            (int) $validated['month'],
+            $areaModel->scheduling_mode,
+            isset($validated['calendar_id']) ? (int) $validated['calendar_id'] : null,
+            array_map(fn ($id) => $id !== null ? (int) $id : null, $validated['shift_calendars'] ?? []),
+        );
         try{
             \Maatwebsite\Excel\Facades\Excel::import($import, $validated['file']);
         }catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            // Reglas de negocio que abortan durante el guardado (p. ej. saldo de vacaciones insuficiente):
+            // la transacción ya se revirtió, se muestra el motivo en vez del error genérico.
+            return response()->json([
+                'message' => 'El archivo tiene errores y no se creo nada.Corrigelos y vuelve a subirlos',
+                'errors' => [$e->getMessage()],
+            ], 422);
         } catch (\Throwable $e){
             report($e);
             return response()->json(['message' => 'Ocurrio un error inesperado al procesar el archivo. Verifica el formato e intenta de nuevo . '], 500);
@@ -1070,7 +1174,8 @@ class ProgramationsController extends Controller
             return response()->json([
                 'message'=> 'El archivo tiene errores y no se creo nada.Corrigelos y vuelve a subirlos',
                 'errors' => $import->getErrors(),
-
+                // Problemas de contrato con sus datos (horas, semana...) para pintarlos agrupados.
+                'issues' => $import->getStaffingIssues(),
             ], 422);
         }
         $summary = $import->getSummary();

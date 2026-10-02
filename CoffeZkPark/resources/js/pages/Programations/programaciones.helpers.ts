@@ -4,21 +4,34 @@ import type { Calendar, DraftBatch, EmployeeSchedule, HighSeasonRange, Programat
 export const isHighSeasonDate = (dayISO: string, ranges: HighSeasonRange[]): boolean =>
     ranges.some((range) => dayISO >= range.start && dayISO <= range.end);
 
-// Política de la empresa SOLO para áreas de jornada fija: el lunes se trabaja máximo hasta el
-// medio día y el martes hasta las 4:00pm, sin importar el turno asignado — si el turno termina
-// después de ese tope ese día puntual, las horas se cuentan solo hasta el tope (no se cambia el
-// turno guardado, solo el cálculo de horas efectivas). Mismo criterio que
-// AreaScheduleExport::hoursForEmployeeDay() en el backend (constantes replicadas allá porque
-// PHP y TS no pueden compartir código; aquí unificado para no tener dos copias TS a mano).
-const FIXED_AREA_MONDAY_CUTOFF_MINUTES = 12 * 60;
-const FIXED_AREA_TUESDAY_CUTOFF_MINUTES = 16 * 60;
+// Hora de salida de las áreas fijas los días de parque cerrado, por día de la semana
+// (isoWeekday => 'HH:MM'). La configura el administrador en el Calendario operativo y llega
+// compartida en auth.user.park_closed_exit_times — estos son solo los valores por defecto.
+export type ClosedDayExitTimes = Record<number, string>;
+export const DEFAULT_CLOSED_DAY_EXIT_TIMES: ClosedDayExitTimes = { 1: '13:00', 2: '16:00' };
 
-export const applyFixedAreaCutoff = (hours: number, horaEntrada: string | null | undefined, dayISO: string): number => {
+// El parque cierra los lunes y martes salvo en temporada alta: esos días las áreas fijas salen
+// temprano y las áreas variables (Operaciones) descansan. Mismo criterio que
+// OperatingCalendar::isParkClosed() en el backend.
+export const isParkClosed = (dayISO: string, highSeasonRanges: HighSeasonRange[], exitTimes: ClosedDayExitTimes = DEFAULT_CLOSED_DAY_EXIT_TIMES): boolean =>
+    isoWeekday(toDate(dayISO)) in exitTimes && !isHighSeasonDate(dayISO, highSeasonRanges);
+
+// Política SOLO para áreas de jornada fija, en un día de parque cerrado: se sale a la hora
+// configurada sin importar el turno asignado — las horas se cuentan solo hasta ese tope (no se
+// cambia el turno guardado). Quien llama decide si el día está cerrado (isParkClosed()); mismo
+// cálculo que ShiftHours::forDay() en el backend.
+export const applyFixedAreaCutoff = (
+    hours: number,
+    horaEntrada: string | null | undefined,
+    dayISO: string,
+    exitTimes: ClosedDayExitTimes = DEFAULT_CLOSED_DAY_EXIT_TIMES,
+): number => {
     if (!horaEntrada) return hours;
 
-    const weekday = isoWeekday(toDate(dayISO));
-    const cutoffMinutes = weekday === 1 ? FIXED_AREA_MONDAY_CUTOFF_MINUTES : weekday === 2 ? FIXED_AREA_TUESDAY_CUTOFF_MINUTES : null;
-    if (cutoffMinutes === null) return hours;
+    const exit = exitTimes[isoWeekday(toDate(dayISO))];
+    if (!exit) return hours;
+    const [exitH, exitM] = exit.split(':').map(Number);
+    const cutoffMinutes = exitH * 60 + exitM;
 
     const [inH, inM] = horaEntrada.split(':').map(Number);
     const entradaMinutes = inH * 60 + inM;
@@ -26,21 +39,26 @@ export const applyFixedAreaCutoff = (hours: number, horaEntrada: string | null |
     return Math.min(hours * 60, cutoffMinutes - entradaMinutes) / 60;
 };
 
+// El período a programar va siempre en semanas completas de lunes a domingo, para que cuadre con
+// las vistas y exportaciones por semana.
 export const durationOptions = [
     { days: 7, label: '1 semana' },
-    { days: 15, label: '15 días' },
-    { days: 30, label: '1 mes' },
-    { days: 60, label: '2 meses' },
+    { days: 14, label: '2 semanas' },
+    { days: 28, label: '4 semanas' },
+    { days: 56, label: '8 semanas' },
 ];
+// Una duración guardada de antes (15, 30, 60 días...) pasa a la opción en semanas más cercana.
+export const normalizeDuration = (days: number) =>
+    durationOptions.reduce((best, option) => (Math.abs(option.days - days) < Math.abs(best.days - days) ? option : best)).days;
 
 export const toDate = (value: string) => new Date(`${value}T00:00:00`);
 export const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
-export const allIsoDatesInRange = (start: string, days: number) =>
-    Array.from({ length: days }, (_, index) => {
-        const date = toDate(start);
-        date.setDate(date.getDate() + index);
-        return toIsoDate(date);
-    });
+// Lunes de la semana del día dado (ISO 'YYYY-MM-DD').
+export const mondayOf = (dayISO: string) => {
+    const date = toDate(dayISO);
+    date.setDate(date.getDate() - (isoWeekday(date) - 1));
+    return toIsoDate(date);
+};
 export const formatDay = (value: Date) => value.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' }).replace('.', '');
 export const formatRangeLabel = (datesInRange: Date[]) => {
     const first = datesInRange[0];
@@ -54,28 +72,6 @@ export const monthCalendar = (key: string) => {
     const totalDays = new Date(year, month, 0).getDate();
     const blanks = (first.getDay() + 6) % 7;
     return [...Array(blanks).fill(null), ...Array.from({ length: totalDays }, (_, index) => new Date(year, month - 1, index + 1))];
-};
-
-// Agrupa fechas ISO sueltas en bloques de días consecutivos (el backend solo acepta un rango continuo por petición).
-export const toContiguousRanges = (isoDates: string[]) => {
-    const sorted = [...isoDates].sort();
-    const ranges: { start: string; end: string }[] = [];
-    let start = sorted[0];
-    let prev = sorted[0];
-    for (let i = 1; i < sorted.length; i++) {
-        const current = sorted[i];
-        const expectedNext = toDate(prev);
-        expectedNext.setDate(expectedNext.getDate() + 1);
-        if (current === toIsoDate(expectedNext)) {
-            prev = current;
-            continue;
-        }
-        ranges.push({ start, end: prev });
-        start = current;
-        prev = current;
-    }
-    ranges.push({ start, end: prev });
-    return ranges;
 };
 
 export const newBatchId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -132,17 +128,6 @@ export const shiftHours = (calendar: Calendar): number => {
     return minutes / 60;
 };
 
-// Clave año-semana ISO (lunes a domingo) de una fecha, para agrupar horas por semana calendario
-// igual que weekGroups() en AreaScheduleExport.php.
-export const isoWeekKey = (date: Date): string => {
-    const target = new Date(date.getTime());
-    target.setHours(0, 0, 0, 0);
-    // Jueves de esa semana ISO determina el año-semana.
-    target.setDate(target.getDate() + 3 - ((target.getDay() + 6) % 7));
-    const firstThursday = new Date(target.getFullYear(), 0, 4);
-    const weekNumber = 1 + Math.round(((target.getTime() - firstThursday.getTime()) / 86400000 - 3 + ((firstThursday.getDay() + 6) % 7)) / 7);
-    return `${target.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
-};
 export const shiftColor = (type: 'D' | 'N') =>
     type === 'D'
         ? {
@@ -174,3 +159,23 @@ export const initials = (name: string) =>
 // otro (Fijo, Indefinido, etc.) se ve en el tono neutro/verde del resto de la UI.
 export const contractTextColor = (name?: string | null) =>
     name?.toLowerCase().includes('temporal') ? 'font-medium text-amber-600' : 'text-gray-600';
+
+// Semanas (lunes a domingo) que tocan un mes, para exportar la programación por semana —
+// la primera y la última pueden cruzar al mes anterior/siguiente, igual que en el backend
+// (ProgramationsController::normalizeWeekStart()). month es 1-12; start va en 'YYYY-MM-DD'.
+export const weeksOfMonth = (year: number, month: number): { start: string; label: string }[] => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const lastDay = new Date(year, month, 0);
+    const monday = new Date(year, month - 1, 1);
+    monday.setDate(monday.getDate() - (isoWeekday(monday) - 1));
+
+    const weeks: { start: string; label: string }[] = [];
+    while (monday <= lastDay) {
+        const sunday = new Date(monday);
+        sunday.setDate(sunday.getDate() + 6);
+        weeks.push({ start: iso(monday), label: `Semana ${weeks.length + 1} (${formatDay(monday)} - ${formatDay(sunday)})` });
+        monday.setDate(monday.getDate() + 7);
+    }
+    return weeks;
+};

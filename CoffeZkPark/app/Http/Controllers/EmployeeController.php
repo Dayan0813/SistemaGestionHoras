@@ -52,7 +52,7 @@ class EmployeeController extends Controller
 
             $query->where(function ($q) use ($search) {
                 $q->where('uid', 'LIKE', "{$search}%")
-                    ->orWhere('name', 'LIKE', "%{$search}%")
+                    ->orWhereNameLike($search)
                     ->orWhere('empresa', 'LIKE', "%{$search}%")
                     ->orWhereHas('cargo', function ($c) use ($search) {
                         $c->where('name', 'LIKE', "%{$search}%");
@@ -69,7 +69,7 @@ class EmployeeController extends Controller
 
         $employees = $query
             ->with(['area', 'cargo', 'contrato'])
-            ->orderBy('name')
+            ->orderByName()
             ->paginate(50)
             ->withQueryString();
 
@@ -124,7 +124,9 @@ class EmployeeController extends Controller
 
         $validated = $request->validate([
             'userid' => 'nullable|string|unique:employees,userid',
-            'name' => 'required|string|max:255',
+            // El nombre completo (name) lo arma el modelo a partir de nombres + apellidos.
+            'nombres' => 'required|string|max:255',
+            'apellidos' => 'nullable|string|max:255',
             'cardno' => 'nullable|string',
             'estado' => 'required|string',
             'documentos' => 'nullable|string',
@@ -200,7 +202,9 @@ class EmployeeController extends Controller
         // huérfanos esos registros.
         $validated = $request->validate([
             'userid' => 'nullable|string',
-            'name' => 'required|string|max:255',
+            // El nombre completo (name) lo arma el modelo a partir de nombres + apellidos.
+            'nombres' => 'required|string|max:255',
+            'apellidos' => 'nullable|string|max:255',
             'cardno' => 'nullable|string',
             'estado' => 'required|string',
             'documentos' => 'nullable|string',

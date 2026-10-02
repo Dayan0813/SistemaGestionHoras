@@ -4,6 +4,7 @@ namespace App\Exports;
 
 use App\Models\Employee;
 use App\Models\EmployeeAbsence;
+use App\Services\ShiftHours;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\FromArray;
@@ -64,13 +65,33 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         // (Vacaciones/Incapacidad) con los nombres de los empleados ausentes ese día — ver
         // buildAbsenceRows(). null cuando no aplica (ej. el llamador no tiene el área todavía).
         private ?int $areaId = null,
+        // Opcional (Y-m-d de un lunes): exporta solo esa semana (lunes a domingo, puede cruzar
+        // de mes) en vez del mes $year/$month completo. Ver ProgramationsController::exportMonth().
+        private ?string $weekStart = null,
     ) {
     }
 
     public function title(): string
     {
         // Los nombres de hoja de Excel no pueden pasar de 31 caracteres.
+        if ($this->weekStart !== null) {
+            return substr(sprintf('%s Sem %s', $this->areaName, Carbon::parse($this->weekStart)->format('d-m')), 0, 31);
+        }
+
         return substr(sprintf('%s %02d-%d', $this->areaName, $this->month, $this->year), 0, 31);
+    }
+
+    /** "Octubre 2026" o "Semana del 28 sep. al 4 oct. 2026" — para el título del bloque. */
+    private function periodLabel(): string
+    {
+        if ($this->weekStart !== null) {
+            $start = Carbon::parse($this->weekStart)->locale('es');
+            $end = $start->copy()->addDays(6);
+
+            return sprintf('Semana del %s al %s', $start->isoFormat('D MMM'), $end->isoFormat('D MMM YYYY'));
+        }
+
+        return ucfirst(Carbon::create($this->year, $this->month, 1)->locale('es')->isoFormat('MMMM')) . ' ' . $this->year;
     }
 
     public function array(): array
@@ -100,8 +121,7 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
      */
     public function buildRows(): array
     {
-        $days = $this->daysInMonth();
-        $monthLabel = ucfirst($days[0]->locale('es')->isoFormat('MMMM'));
+        $days = $this->periodDays();
         $dayHeaders = array_map(fn (Carbon $d) => $d->format('d') . ' ' . ucfirst($d->locale('es')->isoFormat('ddd')), $days);
 
         // Índice [employeeUid][dayISO] => cobertura efectiva ese día, calculado UNA sola vez
@@ -118,7 +138,7 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         // de esa fila (separados por ", ") — para darle a esa fila más alto que a una con
         // pocos o ningún nombre, en vez de una altura fija que corta el texto o deja huecos.
         $rowLineCounts = [];
-        $rows[] = ["Programación — {$this->areaName} — {$monthLabel} {$this->year}"];
+        $rows[] = ["Programación — {$this->areaName} — {$this->periodLabel()}"];
 
         if (!empty($grid)) {
             $labelColumns = 1;
@@ -269,29 +289,6 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
         return array_values($groups);
     }
 
-    // Política de la empresa SOLO para áreas de jornada fija: el lunes se trabaja máximo hasta
-    // el medio día y el martes hasta las 4:00pm, sin importar el turno asignado — si el turno
-    // termina después de ese tope ese día puntual, las horas se cuentan solo hasta el tope (no
-    // se cambia el turno guardado, solo el cálculo de horas efectivas). Mismo criterio que
-    // AreaScheduleGrid.tsx.
-    private const FIXED_AREA_MONDAY_CUTOFF_MINUTES = 12 * 60;
-    private const FIXED_AREA_TUESDAY_CUTOFF_MINUTES = 16 * 60;
-
-    /**
-     * true si $date cae dentro de algún rango [start,end] marcado como temporada alta.
-     */
-    private function isHighSeasonDate(Carbon $date): bool
-    {
-        $dateIso = $date->toDateString();
-        foreach ($this->highSeasonRanges as $range) {
-            if (($range['start'] ?? null) !== null && ($range['end'] ?? null) !== null && $dateIso >= $range['start'] && $dateIso <= $range['end']) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     /**
      * [employeeUid][dayISO] => ['programation' => Programation, 'calendar' => Calendar|null,
      * 'workPosition' => WorkPosition|null, 'isAbsenceReplacement' => bool] con la cobertura
@@ -346,70 +343,22 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
 
     /**
      * Horas que dura el turno efectivo de un empleado en una fecha concreta (0 si no
-     * trabaja ese día). Un turno nocturno que cruza medianoche cuenta completo en el día
-     * en que empieza — mismo criterio que shiftHours() en AreaScheduleGrid.tsx. $isFijoArea
-     * indica si el área NO tiene puestos configurados (modo fijo), lo que activa el tope de
-     * lunes/martes.
+     * trabaja ese día) — ver ShiftHours::forDay(), que comparte este cálculo con la
+     * validación de horas semanales. $isFijoArea indica si el área NO tiene puestos
+     * configurados (modo fijo), lo que activa el tope de lunes/martes.
      */
     private function hoursForEmployeeDay(Employee $employee, Carbon $date, bool $isFijoArea, array $coverageIndex): float
     {
-        $dateIso = $date->toDateString();
-        $coverage = $coverageIndex[$employee->uid][$dateIso] ?? null;
-        if ($coverage === null) {
-            return 0.0;
-        }
+        $calendar = $coverageIndex[$employee->uid][$date->toDateString()]['calendar'] ?? null;
 
-        $calendar = $coverage['calendar'];
-        $hours = $this->shiftHoursDecimal($calendar);
-
-        if (!$isFijoArea || !$calendar || !$calendar->hora_entrada) {
-            return $hours;
-        }
-
-        // En temporada alta esta política de horario corto no aplica — se trabaja normal.
-        if ($this->isHighSeasonDate($date)) {
-            return $hours;
-        }
-
-        $cutoffMinutes = match ($date->isoWeekday()) {
-            1 => self::FIXED_AREA_MONDAY_CUTOFF_MINUTES,
-            2 => self::FIXED_AREA_TUESDAY_CUTOFF_MINUTES,
-            default => null,
-        };
-        if ($cutoffMinutes === null) {
-            return $hours;
-        }
-
-        [$inH, $inM] = array_map('intval', explode(':', $calendar->hora_entrada));
-        $entradaMinutes = $inH * 60 + $inM;
-        if ($entradaMinutes >= $cutoffMinutes) {
-            return $hours; // turno nocturno u otro caso raro: no recortar a negativo.
-        }
-
-        return min($hours * 60, $cutoffMinutes - $entradaMinutes) / 60;
-    }
-
-    private function shiftHoursDecimal($calendar): float
-    {
-        if (!$calendar || !$calendar->hora_entrada || !$calendar->hora_salida) {
-            return 0.0;
-        }
-
-        [$inH, $inM] = array_map('intval', explode(':', $calendar->hora_entrada));
-        [$outH, $outM] = array_map('intval', explode(':', $calendar->hora_salida));
-        $minutes = ($outH * 60 + $outM) - ($inH * 60 + $inM);
-        if ($minutes <= 0) {
-            $minutes += 24 * 60;
-        }
-
-        return $minutes / 60;
+        return ShiftHours::forDay($calendar?->hora_entrada, $calendar?->hora_salida, $date, $isFijoArea, $this->highSeasonRanges);
     }
 
     public function registerEvents(): array
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-                $dayColumns = count($this->daysInMonth());
+                $dayColumns = count($this->periodDays());
                 $sheet = $event->sheet->getDelegate();
                 $lastDataRow = $sheet->getHighestRow();
 
@@ -527,9 +476,19 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
             ->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
     }
 
-    /** @return Carbon[] */
-    private function daysInMonth(): array
+    /**
+     * Días que cubre la exportación: los 7 de la semana si se pidió una, si no el mes completo.
+     *
+     * @return Carbon[]
+     */
+    public function periodDays(): array
     {
+        if ($this->weekStart !== null) {
+            $monday = Carbon::parse($this->weekStart)->startOfDay();
+
+            return collect(range(0, 6))->map(fn (int $offset) => $monday->copy()->addDays($offset))->all();
+        }
+
         $start = Carbon::create($this->year, $this->month, 1);
 
         return collect(range(1, $start->daysInMonth))
@@ -630,7 +589,7 @@ class AreaScheduleExport implements FromArray, WithTitle, WithEvents
             ->where('status', 'Activa')
             ->where('start_date', '<=', $days[count($days) - 1]->toDateString())
             ->where('end_date', '>=', $days[0]->toDateString())
-            ->with('employee:uid,name')
+            ->with('employee:uid,nombres,apellidos')
             ->get();
 
         $grid = [];

@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use App\Models\area;
-use App\Models\CompanySetting;
 use App\Models\Employee;
 use App\Models\EmployeeAbsence;
 use App\Models\EmployeeAbsenceSnapshot;
@@ -32,8 +31,8 @@ class EmployeeAbsenceController extends Controller
         $user = auth()->user()->loadMissing('employee');
 
         $query = EmployeeAbsence::with([
-            'employee:uid,name,area_id',
-            'replacementEmployee:uid,name',
+            'employee:uid,nombres,apellidos,area_id',
+            'replacementEmployee:uid,nombres,apellidos',
             'area:id,nombre',
             'createdBy:id,email',
         ])->orderByDesc('id');
@@ -43,7 +42,7 @@ class EmployeeAbsenceController extends Controller
         // de bloquear con 403 se les da un selector para consultar (solo lectura) las
         // ausencias de UNA área a la vez, nunca todas mezcladas.
         $isMultiAreaReadOnly = $user->hasRole('aux_admin_th') || $user->hasRole('aux_th');
-        $employeesQuery = Employee::query()->where('estado', 'Activo')->orderBy('name');
+        $employeesQuery = Employee::query()->where('estado', 'Activo')->orderByName();
 
         if ($isMultiAreaReadOnly) {
             if ($request->filled('area')) {
@@ -73,7 +72,7 @@ class EmployeeAbsenceController extends Controller
             // Para el formulario de creación: en cada empleado va su area_id, así en el
             // frontend el selector de reemplazo se puede filtrar a la MISMA área del ausente
             // sin otra petición (relevante sobre todo para admin, que ve todas las áreas).
-            'employees' => $employeesQuery->get(['uid', 'name', 'area_id']),
+            'employees' => $employeesQuery->get(['uid', 'nombres', 'apellidos', 'area_id']),
         ]);
     }
 
@@ -127,16 +126,21 @@ class EmployeeAbsenceController extends Controller
             'area_id' => 'required|integer|exists:areas,id',
         ]);
 
-        $this->ensureAreaAcces($validated['area_id']);
+        // Solo lectura: quien puede consultar la programación de un área (aux_admin_th/aux_th, de
+        // cualquiera) también ve sus ausencias marcadas en ella.
+        $this->ensureAreaViewAccess($validated['area_id']);
 
         // Solo ausencias con fechas reales bloquean celdas — una reserva de mes sin fechas
         // (ver storeReservation()) no tiene rango que bloquear, se expone aparte abajo.
         $absences = EmployeeAbsence::where('area_id', $validated['area_id'])
             ->where('status', 'Activa')
             ->whereNotNull('start_date')
+            ->with('employee:uid,nombres,apellidos')
             ->get(['id', 'employee_uid', 'type', 'start_date', 'end_date'])
             ->map(fn ($a) => [
                 'employee_uid' => $a->employee_uid,
+                // Para listar al ausente aunque no tenga ningún turno en el período mostrado.
+                'employee_name' => $a->employee?->name,
                 'type' => $a->type,
                 'start_date' => $a->start_date->toDateString(),
                 'end_date' => $a->end_date->toDateString(),
@@ -165,11 +169,9 @@ class EmployeeAbsenceController extends Controller
             'type' => 'required|in:vacaciones,incapacidad',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
-            // Obligatorio solo para incapacidad: cubrir el puesto suele ser crítico. Las
-            // vacaciones no necesitan reemplazo — basta con bloquear la disponibilidad del
-            // empleado esos días (ver absenceForDay() en Programaciones.tsx).
+            // Opcional para cualquier tipo: sin reemplazo solo se bloquean los días del ausente
+            // (el personal mínimo del calendario operativo avisará si el área queda corta).
             'replacement_employee_uid' => [
-                Rule::requiredIf($request->input('type') === 'incapacidad'),
                 'nullable',
                 'string',
                 'exists:employees,uid',
@@ -196,6 +198,10 @@ class EmployeeAbsenceController extends Controller
             if (str_contains($contratoNombre, 'temporal')) {
                 abort(422, 'Los empleados con contrato temporal no tienen derecho a vacaciones.');
             }
+            $this->assertNoOwnVacationOverlap(
+                $absentEmployee->uid,
+                $this->businessDaysInRange($validated['start_date'], $validated['end_date']),
+            );
         }
 
 
@@ -251,23 +257,22 @@ class EmployeeAbsenceController extends Controller
 
     /**
      * Plan anual de vacaciones: registra VARIAS tandas de vacaciones de una vez para un mismo
-     * empleado (fraccionamiento de los 15 días), contando solo días HÁBILES (sin fin de
-     * semana ni festivos colombianos — a diferencia de store(), que sigue contando días
-     * calendario para no alterar el comportamiento ya probado de incapacidad/atajo rápido).
+     * empleado: los 15 días se reparten en las tandas, meses y temporadas que el empleado
+     * quiera, contando solo días HÁBILES (sin fin de semana ni festivos colombianos).
      * Aplica a cualquier empleado con derecho a vacaciones (cualquier contrato que NO sea
      * "temporal" — "empleado fijo" es sobre el CONTRATO del empleado, no sobre el modo de
-     * programación de su área, que puede ser fija o variable por igual). Reglas propias de
-     * este flujo, que NO aplican a store(): ningún día puede caer en temporada alta, y no
-     * puede solaparse con vacaciones ya activas de OTRO empleado de la misma área. Nunca
-     * lleva reemplazo (las vacaciones solo bloquean disponibilidad, ver store()).
+     * programación de su área, que puede ser fija o variable por igual). Reglas: no pasar
+     * del saldo, las tandas no se cruzan entre sí, y no se solapan con vacaciones activas de
+     * OTRO empleado de la misma área (el admin puede saltarse esto último con aviso). La
+     * temporada alta solo genera aviso. Nunca lleva reemplazo (ver store()).
      */
     public function storePlan(Request $request)
     {
         $validated = $request->validate([
             'employee_uid' => 'required|string|exists:employees,uid',
-            // Máximo 2 tandas por plan (mismo límite que PlanVacaciones.tsx) — un fraccionamiento
-            // más granular no aporta y complica la validación de solapamiento/temporada alta.
-            'ranges' => 'required|array|min:1|max:2',
+            // Sin tope fijo de tandas: el límite real es el saldo de días (cada tanda tiene al
+            // menos un día hábil). El max:60 solo frena un envío absurdo.
+            'ranges' => 'required|array|min:1|max:60',
             'ranges.*.start_date' => 'required|date',
             'ranges.*.end_date' => 'required|date|after_or_equal:ranges.*.start_date',
         ]);
@@ -284,21 +289,36 @@ class EmployeeAbsenceController extends Controller
             abort(422, 'Los empleados con contrato temporal no tienen derecho a vacaciones.');
         }
 
-        $highSeasonRanges = CompanySetting::get('high_season_ranges', []);
+        $highSeasonRanges = \App\Services\OperatingCalendar::highSeasonRanges();
         $areaId = (int) $absentEmployee->area_id;
+
+        // Avisos que no bloquean (temporada alta para todos; cruce con otro empleado solo si
+        // quien registra es el administrador). El saldo de días se sigue respetando.
+        $isAdmin = auth()->user()->hasRole('admin');
+        $warnings = [];
 
         // 1) Expandir cada tanda a sus días HÁBILES, validar temporada alta y acumular total.
         $allBusinessDays = [];
         foreach ($validated['ranges'] as $i => $range) {
             $businessDays = $this->businessDaysInRange($range['start_date'], $range['end_date']);
             foreach ($businessDays as $day) {
+                // Las vacaciones se pueden tomar en cualquier temporada: la temporada alta ya no
+                // bloquea a nadie, solo queda como aviso.
                 if ($this->isHighSeasonDay($day, $highSeasonRanges)) {
                     $tanda = $i + 1;
-                    abort(422, "La tanda {$tanda} cae en temporada alta (día {$day}). No se pueden programar vacaciones en temporada alta.");
+                    $warnings[] = "La tanda {$tanda} cae en temporada alta (desde el {$day}).";
+                    break;
                 }
             }
             $allBusinessDays = array_merge($allBusinessDays, $businessDays);
         }
+
+        // Dos tandas del mismo plan no pueden compartir días: se descontarían dos veces del saldo.
+        if (count(array_unique($allBusinessDays)) !== count($allBusinessDays)) {
+            abort(422, 'Hay tandas que se cruzan entre sí; cada día solo puede estar en una tanda.');
+        }
+        // ...ni con vacaciones que el empleado ya tenga registradas de antes.
+        $this->assertNoOwnVacationOverlap($absentEmployee->uid, $allBusinessDays);
 
         $totalDays = count($allBusinessDays);
         if ($totalDays === 0) {
@@ -329,8 +349,11 @@ class EmployeeAbsenceController extends Controller
             });
 
         if ($conflicting->isNotEmpty()) {
-            $names = Employee::whereIn('uid', $conflicting->pluck('employee_uid')->unique())->pluck('name')->implode(', ');
-            abort(422, "Ya hay otro empleado del área de vacaciones en fechas que se cruzan: {$names}.");
+            $names = Employee::whereIn('uid', $conflicting->pluck('employee_uid')->unique())->get(['nombres', 'apellidos'])->pluck('name')->implode(', ');
+            if (!$isAdmin) {
+                abort(422, "Ya hay otro empleado del área de vacaciones en fechas que se cruzan: {$names}.");
+            }
+            $warnings[] = "Se cruza con las vacaciones de: {$names}.";
         }
 
         // 3) Crear una EmployeeAbsence por tanda, todo dentro de un solo lock+transacción.
@@ -369,11 +392,11 @@ class EmployeeAbsenceController extends Controller
             });
         });
 
-        return $this->respondAbsenceResult(
-            $request,
-            'success',
-            "✅ Plan de vacaciones registrado: {$totalDays} día(s) hábiles en ".count($validated['ranges']).' tanda(s).',
-        );
+        $message = "Plan de vacaciones registrado: {$totalDays} día(s) hábiles en ".count($validated['ranges']).' tanda(s).';
+
+        return empty($warnings)
+            ? $this->respondAbsenceResult($request, 'success', "✅ {$message}")
+            : $this->respondAbsenceResult($request, 'warning', "⚠️ {$message} Ojo: ".implode(' ', $warnings));
     }
 
     /**
@@ -420,11 +443,52 @@ class EmployeeAbsenceController extends Controller
     }
 
     /**
-     * true si $dayISO cae dentro de algún rango de temporada alta (CompanySetting
-     * 'high_season_ranges', configurado globalmente por un admin en Areas/Index.tsx).
+     * true si $dayISO cae dentro de algún rango de temporada alta (días cuyo tipo está
+     * marcado como temporada alta en el calendario operativo, ver OperatingCalendar).
      *
      * @param array<int, array{start:string,end:string}> $highSeasonRanges
      */
+    /**
+     * Un empleado no puede tener dos vacaciones activas que compartan días: esos días se
+     * descontarían dos veces del saldo. $exceptId excluye la ausencia que se está editando.
+     *
+     * @param string[] $days fechas Y-m-d que se quieren registrar
+     */
+    private function assertNoOwnVacationOverlap(string $employeeUid, array $days, ?int $exceptId = null): void
+    {
+        if (empty($days)) {
+            return;
+        }
+
+        $overlapping = EmployeeAbsence::where('employee_uid', $employeeUid)
+            ->where('type', 'vacaciones')
+            ->where('status', 'Activa')
+            ->whereNotNull('start_date')
+            ->when($exceptId, fn ($q) => $q->where('id', '!=', $exceptId))
+            ->where('start_date', '<=', max($days))
+            ->where('end_date', '>=', min($days))
+            ->get(['start_date', 'end_date'])
+            ->first(function ($absence) use ($days) {
+                $start = $absence->start_date->toDateString();
+                $end = $absence->end_date->toDateString();
+                foreach ($days as $day) {
+                    if ($day >= $start && $day <= $end) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+
+        if ($overlapping) {
+            abort(422, sprintf(
+                'El empleado ya tiene vacaciones registradas del %s al %s que se cruzan con estas fechas.',
+                $overlapping->start_date->toDateString(),
+                $overlapping->end_date->toDateString(),
+            ));
+        }
+    }
+
     private function isHighSeasonDay(string $dayISO, array $highSeasonRanges): bool
     {
         foreach ($highSeasonRanges as $range) {
@@ -626,20 +690,22 @@ class EmployeeAbsenceController extends Controller
     public function createAbsenceRecord(
         Employee $absentEmployee,
         string $type,
-        string $enDate,
+        string $startDate,
+        string $endDate,
         ?Employee $replacementEmployee = null,
         ?string $notes = null,
          ): array {
             $areaId = (int) $absentEmployee->area_id;
-            $requestDays = $type === 'vacaciones'
-             ? Carbon::parse($startDate)->diffInDays(Carbon::parse($endDate)) + 1 
+            $requestedDays = $type === 'vacaciones'
+             ?count($this->businessDaysInRange($startDate, $endDate))
              : null;
-             return $this->withAreaLock($areaId, function() use ($absentEmployee, $type, $startDate, $endDate , $replacementEmployee , $notes , $areaId, $requestDays){
-                return DB::transaction(function () use ($absentEmployee, $type, $startDate , $endDate , $replacementEmployee  , $notes , $areaId , $requestDays ){
-                    if (type === 'vacaciones'){
+             return $this->withAreaLock($areaId, function() use ($absentEmployee, $type, $startDate, $endDate , $replacementEmployee , $notes , $areaId, $requestedDays){
+                return DB::transaction(function () use ($absentEmployee, $type, $startDate , $endDate , $replacementEmployee  , $notes , $areaId , $requestedDays ){
+                    // Revalida el saldo con el valor fresco (bajo lock de fila).
+                    if ($type === 'vacaciones'){
                         $freshEmployee = Employee::where('uid', $absentEmployee->uid)->lockForUpdate()->first();
-                        if ($requestedDays >$freshEmployee->dias_vacaciones_disponibles){
-                            abort(422,"El empleado {$freshEmployee->name} solo tiene {$freshEmployee->dias_vacacionales_disponibles} dia(s) de vacaciones disponibles y se solicitarion {$requestDays}.");
+                        if ($requestedDays > $freshEmployee->dias_vacaciones_disponibles){
+                            abort(422,"El empleado {$freshEmployee->name} solo tiene {$freshEmployee->dias_vacaciones_disponibles} día(s) de vacaciones disponibles y se solicitaron {$requestedDays}.");
                         }
                 }
                 $absence = EmployeeAbsence::create([
@@ -648,21 +714,21 @@ class EmployeeAbsenceController extends Controller
                     'type' => $type,
                     'start_date' => $startDate,
                     'end_date'=> $endDate,
-                    'days' => $requestDays,
-                    'replacement_emploee_uid ' => $replacementEmployee?->uid,
+                    'days' => $requestedDays,
+                    'replacement_employee_uid' => $replacementEmployee?->uid,
                     'status' => 'Activa',
                     'notes'=> $notes,
                     'created_by' => auth()->id(),
                 ]);
 
                 if($type === 'vacaciones'){
-                    $absentEmployee->decrement('dias_vacacionales_disponibles', $requestDays);
+                    $absentEmployee->decrement('dias_vacaciones_disponibles', $requestedDays);
                 }
-                [$inheritDays, $skippedForConflict] = $this->createAbsence(
+                [$inheritedDays, $skippedForConflict] = $this->createAbsence(
                     $absence,
                     $absentEmployee,
                     $replacementEmployee,
-                    $areaid,
+                    $areaId,
                     $startDate,
                     $endDate,
                 );
@@ -680,6 +746,60 @@ class EmployeeAbsenceController extends Controller
         return redirect()
             ->route('ausencias')
             ->with('success', '✅ Ausencia cancelada: los turnos heredados por el reemplazo fueron revertidos y la programación del empleado se restauró.');
+    }
+
+    /**
+     * Edición completa de una ausencia ACTIVA (solo administrador, ver la ruta): fechas,
+     * reemplazo y notas, para vacaciones o incapacidad, con o sin reemplazo. Revierte la
+     * ausencia actual (turnos, herencias del reemplazo y saldo) y la vuelve a crear con los
+     * datos nuevos, todo en una transacción: si algo falla, queda como estaba.
+     */
+    public function update(Request $request, EmployeeAbsence $absence)
+    {
+        $this->ensureAreaAcces((int) $absence->area_id);
+
+        if ($absence->status !== 'Activa') {
+            abort(422, 'Esta ausencia ya está cancelada.');
+        }
+
+        $validated = $request->validate([
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'replacement_employee_uid' => ['nullable', 'string', 'exists:employees,uid', Rule::notIn([$absence->employee_uid])],
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        $absentEmployee = Employee::where('uid', $absence->employee_uid)->firstOrFail();
+
+        if ($absence->type === 'vacaciones') {
+            $this->assertNoOwnVacationOverlap(
+                $absentEmployee->uid,
+                $this->businessDaysInRange($validated['start_date'], $validated['end_date']),
+                $absence->id,
+            );
+        }
+
+        $replacementEmployee = null;
+        if (!empty($validated['replacement_employee_uid'])) {
+            $replacementEmployee = Employee::where('uid', $validated['replacement_employee_uid'])->firstOrFail();
+            if ((int) $replacementEmployee->area_id !== (int) $absentEmployee->area_id) {
+                abort(403, 'El reemplazo debe pertenecer a la misma área que el empleado ausente.');
+            }
+        }
+
+        DB::transaction(function () use ($absence, $absentEmployee, $validated, $replacementEmployee) {
+            $this->revertAbsence($absence);
+            $this->createAbsenceRecord(
+                $absentEmployee,
+                $absence->type,
+                $validated['start_date'],
+                $validated['end_date'],
+                $replacementEmployee,
+                $validated['notes'] ?? null,
+            );
+        });
+
+        return $this->respondAbsenceResult($request, 'success', '✅ Ausencia actualizada.');
     }
 
     /**
@@ -711,12 +831,18 @@ class EmployeeAbsenceController extends Controller
         $absentEmployee = Employee::where('uid', $absence->employee_uid)->with(['area', 'contrato'])->firstOrFail();
         $areaId = (int) $absence->area_id;
 
-        $highSeasonRanges = CompanySetting::get('high_season_ranges', []);
+        $highSeasonRanges = \App\Services\OperatingCalendar::highSeasonRanges();
         $businessDays = $this->businessDaysInRange($validated['start_date'], $validated['end_date']);
+        // Mismo criterio que storePlan(): temporada alta solo avisa; el cruce con otro
+        // empleado bloquea salvo al administrador.
+        $isAdmin = auth()->user()->hasRole('admin');
+        $warnings = [];
 
         foreach ($businessDays as $day) {
+            // Temporada alta: solo aviso, igual que en storePlan().
             if ($this->isHighSeasonDay($day, $highSeasonRanges)) {
-                abort(422, "La fecha elegida cae en temporada alta (día {$day}). No se pueden programar vacaciones en temporada alta.");
+                $warnings[] = "Cae en temporada alta (desde el {$day}).";
+                break;
             }
         }
 
@@ -724,6 +850,8 @@ class EmployeeAbsenceController extends Controller
         if ($totalDays === 0) {
             abort(422, 'El rango elegido no tiene ningún día hábil.');
         }
+        // Que la tanda editada no se cruce con otras vacaciones del mismo empleado.
+        $this->assertNoOwnVacationOverlap($absentEmployee->uid, $businessDays, $absence->id);
 
         // El saldo "disponible" para esta edición incluye de vuelta los días que esta MISMA
         // tanda ya tenía descontados (se está reemplazando, no sumando una tanda nueva).
@@ -752,8 +880,11 @@ class EmployeeAbsenceController extends Controller
             });
 
         if ($conflicting->isNotEmpty()) {
-            $names = Employee::whereIn('uid', $conflicting->pluck('employee_uid')->unique())->pluck('name')->implode(', ');
-            abort(422, "Ya hay otro empleado del área de vacaciones en fechas que se cruzan: {$names}.");
+            $names = Employee::whereIn('uid', $conflicting->pluck('employee_uid')->unique())->get(['nombres', 'apellidos'])->pluck('name')->implode(', ');
+            if (!$isAdmin) {
+                abort(422, "Ya hay otro empleado del área de vacaciones en fechas que se cruzan: {$names}.");
+            }
+            $warnings[] = "Se cruza con las vacaciones de: {$names}.";
         }
 
         $this->withAreaLock($areaId, function () use ($absence, $absentEmployee, $validated, $businessDays) {
@@ -792,7 +923,9 @@ class EmployeeAbsenceController extends Controller
             });
         });
 
-        return $this->respondAbsenceResult($request, 'success', "✅ Tanda actualizada: {$totalDays} día(s) hábiles.");
+        return empty($warnings)
+            ? $this->respondAbsenceResult($request, 'success', "✅ Tanda actualizada: {$totalDays} día(s) hábiles.")
+            : $this->respondAbsenceResult($request, 'warning', "⚠️ Tanda actualizada: {$totalDays} día(s) hábiles. Ojo: ".implode(' ', $warnings));
     }
 
     /**

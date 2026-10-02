@@ -2,9 +2,11 @@ import ConfirmModal from '@/Components/confirmModal';
 import MainLayout from '@/Layouts/MainLayout';
 import { router, usePage } from '@inertiajs/react';
 import axios from 'axios';
-import { Check, ChevronLeft, ChevronRight, Edit3, FileSpreadsheet, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { Briefcase, Check, ChevronLeft, ChevronRight, Edit3, FileSpreadsheet, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AlreadyScheduledPanel, { type SavedAssignment } from './Programations/AlreadyScheduledPanel';
 import AreaScheduleGrid from './Programations/AreaScheduleGrid';
+import { AbsenceBadge, useAreaAbsences } from './Programations/useAreaAbsences';
 import DayAssignmentCalendar from './Programations/DayAssignmentCalendar';
 import {
     batchCoversDay,
@@ -15,7 +17,10 @@ import {
     formatRangeLabel,
     getCalendarForDay,
     getProgramationForDay,
+    getWorkPositionIdForDay,
     initials,
+    mondayOf,
+    normalizeDuration,
     isoWeekday,
     monthCalendar,
     monthKey,
@@ -23,8 +28,14 @@ import {
     shiftColor,
     toDate,
     toIsoDate,
+    weeksOfMonth,
+    isParkClosed,
+    DEFAULT_CLOSED_DAY_EXIT_TIMES,
 } from './Programations/programaciones.helpers';
 import ShiftPickerPopover from './Programations/ShiftPickerPopover';
+import StaffingIssuesPanel, { type StaffingIssue } from './Programations/StaffingIssuesPanel';
+import WorkPositionsManager from './Programations/WorkPositionsManager';
+import { DayTypeBadge, DayTypeCorner, StaffingCount, useOperatingDays } from './Programations/useOperatingDays';
 import type {
     AnchorRect,
     Calendar,
@@ -35,6 +46,14 @@ import type {
     WorkPosition,
 } from './Programations/programaciones.types';
 
+// Turnos de la plantilla Excel de áreas fijas — deben coincidir con AreaScheduleTemplateExport::SHIFT_NAMES.
+const TEMPLATE_SHIFTS = [
+    { key: 'APERTURA', label: 'Apertura' },
+    { key: 'NORMAL', label: 'Normal' },
+    { key: 'CIERRE', label: 'Cierre' },
+] as const;
+type TemplateShift = (typeof TEMPLATE_SHIFTS)[number]['key'];
+
 export default function Programaciones() {
     const { auth, allAreas } = usePage().props as any;
     const areaId: number | null = auth?.user?.area_id ?? null;
@@ -44,11 +63,27 @@ export default function Programaciones() {
     // únicamente la consulta de solo lectura por área, nunca el asistente de
     // creación (que de todos modos no podría enviar).
     const canCreate: boolean = auth?.user?.permissions?.includes('programaciones.crear') ?? false;
+    // Coordinador / aux_admin_th: crear, editar, activar-desactivar y eliminar puestos de su área.
+    const canManagePositions: boolean = auth?.user?.permissions?.includes('work_positions.gestionar') ?? false;
 
     // Estado del flujo de plantilla Excel (descargar en blanco / subir diligenciada) — ver
     // ProgramationsController::downloadTemplate/uploadTemplate.
     const [templateFile, setTemplateFile] = useState<File | null>(null);
+    // Áreas variables: la plantilla solo asigna empleados a puestos; el horario de todos los turnos se elige aquí.
+    const [templateCalendarId, setTemplateCalendarId] = useState<number | null>(null);
+    // Áreas fijas: la plantilla marca cada día como Apertura, Normal o Cierre; aquí se elige el horario de cada uno
+    // (solo hace falta el de los turnos que se usen en el archivo; la importación avisa si falta alguno).
+    const [templateShiftCalendars, setTemplateShiftCalendars] = useState<Record<TemplateShift, number | null>>({
+        APERTURA: null,
+        NORMAL: null,
+        CIERRE: null,
+    });
+    const templateShiftsChosen =
+        schedulingMode === 'variable' ? templateCalendarId !== null : Object.values(templateShiftCalendars).some((id) => id !== null);
     const [uploadingTemplate, setUploadingTemplate] = useState(false);
+    // "Exportar todas las áreas": '' = mes actual completo, o el lunes ('YYYY-MM-DD') de una de sus semanas.
+    const [exportAllWeekStart, setExportAllWeekStart] = useState('');
+    const currentMonthWeeks = useMemo(() => weeksOfMonth(new Date().getFullYear(), new Date().getMonth() + 1), []);
     const [templateResult, setTemplateResult] = useState<{ type: 'success' | 'error'; message: string; errors?: string[] } | null>(null);
     const [confirmingDraft , setConfirmingDraft] = useState(false);
 
@@ -97,6 +132,7 @@ export default function Programaciones() {
     const [newPositionNames, setNewPositionNames] = useState<string[]>(['']);
     const [editingPosition, setEditingPosition] = useState<number | null>(null);
     const [deletingPosition, setDeletingPosition] = useState<number | null>(null);
+    const [managingPositions, setManagingPositions] = useState(false);
     const [filter, setFilter] = useState('all');
     const [openDayPicker, setOpenDayPicker] = useState<{ uid: string; dayISO: string; rect: AnchorRect } | null>(null);
     const [search, setSearch] = useState('');
@@ -105,15 +141,35 @@ export default function Programaciones() {
     const [deletingCalendar, setDeletingCalendar] = useState<number | null>(null);
     const [discardingDraft, setDiscardingDraft] = useState(false);
     const [toast, setToast] = useState('');
-    const [duration, setDuration] = useState(initialDraft.duration ?? 7);
-    const [startDate, setStartDate] = useState(initialDraft.startDate ?? toIsoDate(new Date()));
-    // Mueve el encabezado; en modo fijo también mueve la Vista previa (en variable, la Vista
-    // previa es un calendario del período completo, sin paginar por semana).
+    // El período siempre arranca un lunes y dura semanas completas (ver durationOptions).
+    const [duration, setDuration] = useState(normalizeDuration(initialDraft.duration ?? 7));
+    const [startDate, setStartDate] = useState(mondayOf(initialDraft.startDate ?? toIsoDate(new Date())));
+    // Semana elegida como "Semana N de <mes>": el mes es el de su jueves, así "28 sep – 4 oct"
+    // cuenta como semana 1 de octubre (mismo criterio que weeksOfMonth()).
+    const startWeek = useMemo(() => {
+        const thursday = toDate(startDate);
+        thursday.setDate(thursday.getDate() + 3);
+        const weeks = weeksOfMonth(thursday.getFullYear(), thursday.getMonth() + 1);
+        return {
+            number: Math.max(weeks.findIndex((week) => week.start === startDate), 0) + 1,
+            monthName: thursday.toLocaleDateString('es-CO', { month: 'long' }),
+        };
+    }, [startDate]);
+    const shiftStartWeek = (delta: number) => {
+        const monday = toDate(startDate);
+        monday.setDate(monday.getDate() + delta * 7);
+        setStartDate(toIsoDate(monday));
+    };
+    // Semana visible (de a 7 días) de la tabla de asignación en modo fijo.
     const [weekIndex, setWeekIndex] = useState(0);
-    // Día abierto en la Vista previa (modo variable) para ver el detalle de quién trabaja qué
-    // puesto ese día — es de solo lectura, a diferencia del panel del Paso 03.
-    const [openPreviewDayISO, setOpenPreviewDayISO] = useState<string | null>(null);
     const [savingProgress, setSavingProgress] = useState<{ done: number; total: number } | null>(null);
+    // Reglas de contrato (fijos/temporales) que no cumple lo que se intentó subir, sea el borrador
+    // (uploadDraft) o la plantilla (uploadTemplate); mientras haya, no se guarda nada.
+    const [staffingIssues, setStaffingIssues] = useState<StaffingIssue[]>([]);
+    const staffingIssuesRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (staffingIssues.length > 0) staffingIssuesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, [staffingIssues]);
 
     // Persiste el borrador (días elegidos + asignaciones pendientes) en este navegador,
     // para que recargar la página o cerrar la pestaña por accidente no lo pierda.
@@ -192,7 +248,7 @@ export default function Programaciones() {
         [duration, startDate],
     );
 
-    // "Vista previa semanal" navega, de a 7 días, el mismo período elegido en el Paso 1
+    // La tabla de asignación (modo fijo) navega, de a 7 días, el mismo período elegido en el Paso 1
     // (Desde + Duración) — con "1 semana" es la única página; con "15 días"/"1 mes"/"2 meses"
     // se recorre en bloques de 7 con las flechas < >.
     const visibleDates = useMemo(() => rangeDates.slice(weekIndex * 7, weekIndex * 7 + 7), [rangeDates, weekIndex]);
@@ -200,8 +256,16 @@ export default function Programaciones() {
     // Si cambia el período (Desde o Duración), vuelve a la primera página en vez de quedarse
     // en una página que puede ya no existir para el nuevo rango.
     useEffect(() => setWeekIndex(0), [startDate, duration]);
-    useEffect(() => setOpenPreviewDayISO(null), [startDate, duration]);
     const calendarMonths = useMemo(() => [...new Set(rangeDates.map(monthKey))], [rangeDates]);
+    // Tipo de día (AA, A, B, C...) del calendario operativo en el período que se está programando,
+    // con el personal mínimo que pide esta área cada día (para mostrar "programados / requeridos").
+    const operatingDays = useOperatingDays(
+        rangeDates.length ? toIsoDate(rangeDates[0]) : null,
+        rangeDates.length ? toIsoDate(rangeDates[rangeDates.length - 1]) : null,
+        areaId,
+    );
+    // Vacaciones e incapacidades activas del área (se muestran en vez de dejar el día en blanco).
+    const { absenceFor } = useAreaAbsences(areaId);
     const calendarPendingDeletion = calendars.find((c) => c.id === deletingCalendar) ?? null;
     const pendingCount = batches.reduce((sum, b) => sum + b.employeeUids.length, 0);
 
@@ -243,7 +307,7 @@ export default function Programaciones() {
                 const key = monthKey(date);
                 if (!months.has(key)) months.set(key, { year: date.getFullYear(), month: date.getMonth() + 1 });
             };
-            // "Vista previa semanal" y la grilla de asignación comparten el mismo período
+            // La grilla de asignación usa el período
             // (Desde + Duración del Paso 1), así que basta con cubrir esos meses.
             rangeDates.forEach(addMonth);
             addMonth(new Date());
@@ -282,9 +346,8 @@ export default function Programaciones() {
         [scheduleByEmployee, todayISO],
     );
 
-    // Para la "Vista previa" (modo variable): a qué puesto/turno queda un empleado un día
-    // concreto, con el borrador mandando sobre lo ya guardado (igual que en el Paso 03), pero
-    // marcando isDraft para poder distinguir "pendiente por subir" de "ya guardado" en pantalla.
+    // A qué puesto/turno queda un empleado un día concreto, con el borrador mandando sobre lo ya
+    // guardado — se usa para contar cuántas personas van programadas cada día (calendario operativo).
     const resolvePreviewAssignment = useCallback(
         (dayISO: string, uid: string): { workPositionId: number | null; calendarId: number | null; isDraft: boolean } => {
             const batch = batches.find((b) => b.employeeUids.includes(uid) && batchCoversDay(b, dayISO));
@@ -295,6 +358,31 @@ export default function Programaciones() {
         },
         [batches, scheduleByEmployee],
     );
+
+    // Turnos ya guardados (sin contar el borrador) en cada día del período elegido: alimenta el
+    // aviso de "estas fechas ya tienen programación".
+    const savedByDay = useMemo(() => {
+        const result: [string, SavedAssignment[]][] = [];
+        rangeDates.forEach((date) => {
+            const iso = toIsoDate(date);
+            const rows: SavedAssignment[] = [];
+            employeesList.forEach((employee) => {
+                const programation = getProgramationForDay(scheduleByEmployee[employee.uid], iso);
+                if (!programation) return;
+                const positionId = getWorkPositionIdForDay(programation, iso);
+                const position = positionId ? workPositionsList.find((p) => p.id === positionId) : null;
+                rows.push({
+                    uid: employee.uid,
+                    name: employee.name,
+                    position: position ? [position.attraction, position.name].filter(Boolean).join(' · ') : null,
+                    calendar: getCalendarForDay(programation, iso),
+                    isDraft: programation.status === 'Borrador',
+                });
+            });
+            if (rows.length > 0) result.push([iso, rows.sort((a, b) => a.name.localeCompare(b.name))]);
+        });
+        return result;
+    }, [rangeDates, employeesList, scheduleByEmployee, workPositionsList]);
 
     const previewAssignmentsForDay = useCallback(
         (dayISO: string) =>
@@ -386,8 +474,9 @@ export default function Programaciones() {
     // Envía todo el borrador al servidor, un batch a la vez. Los que fallan se quedan en el
     // borrador (no se pierden), pero ya NO frenan a los siguientes: un batch roto (ej. quedó
     // huérfano porque su puesto se eliminó) antes solo bloqueaba toda la cola detrás de él.
-    const uploadDraft = () => {
+    const uploadDraft = async () => {
         if (!areaId) return;
+        setStaffingIssues([]);
 
         // Blindaje: nunca enviar un batch sin empleados o (en modo fijo) sin
         // ningún día de la semana marcado — eso sería una "programación
@@ -402,6 +491,29 @@ export default function Programaciones() {
 
         if (validBatches.length !== batches.length) {
             setBatches(validBatches);
+        }
+
+        // Antes de subir nada: los fijos deben cumplir su mínimo semanal de horas y los
+        // temporales solo cubrir días en que falta un fijo (ProgramationsController::validateDraft).
+        // Si algo no cumple, no se sube ningún bloque y el borrador queda intacto para corregirlo.
+        try {
+            const res = await axios.post(route('programations.validateDraft'), {
+                area_id: areaId,
+                batches: validBatches.map((b) => ({
+                    calendar_id: b.calendarId,
+                    start_date: b.startDate,
+                    end_date: b.endDate,
+                    employees: b.employeeUids,
+                    work_days: b.workDays ?? null,
+                })),
+            });
+            if (res.data.issues?.length) {
+                setStaffingIssues(res.data.issues);
+                return;
+            }
+        } catch {
+            notify('No se pudo validar la programación. Intenta de nuevo.');
+            return;
         }
 
         setSavingProgress({ done: 0, total: validBatches.length });
@@ -522,14 +634,35 @@ export default function Programaciones() {
     const uploadTemplate = async (file : File) => {
         console.log('uploadTemplate llamado, areaId =', areaId, 'file =', file.name);
         if (!areaId) return;
+        if (!templateShiftsChosen) {
+            setTemplateResult({
+                type: 'error',
+                message:
+                    schedulingMode === 'variable'
+                        ? 'Elige el horario de la plantilla antes de subir el archivo.'
+                        : 'Elige el horario de al menos un turno (Apertura, Normal o Cierre) antes de subir el archivo.',
+            });
+            setTemplateFile(null);
+            return;
+        }
 
         setUploadingTemplate(true);
         setTemplateResult(null);
+        setStaffingIssues([]);
 
         const formData = new FormData();
         formData.append('file', file);
         formData.append('year', String(new Date().getFullYear()));
         formData.append('month', String(new Date().getMonth() + 1));
+        if (schedulingMode === 'variable' && templateCalendarId) {
+            formData.append('calendar_id', String(templateCalendarId));
+        }
+        if (schedulingMode === 'fijo') {
+            TEMPLATE_SHIFTS.forEach(({ key }) => {
+                const calendarId = templateShiftCalendars[key];
+                if (calendarId !== null) formData.append(`shift_calendars[${key}]`, String(calendarId));
+            });
+        }
 
         try {
             const res = await axios.post(route('programations.uploadTemplate', areaId), formData);
@@ -537,8 +670,13 @@ export default function Programaciones() {
             setTemplateFile(null);
             fetchSchedule();
         } catch (err: unknown) {
-            const axiosErr = err as { response?: { status?: number; data?: { message?: string; errors?: string[] } } };
-            if (axiosErr.response?.status === 422 && axiosErr.response.data?.errors) {
+            const axiosErr = err as {
+                response?: { status?: number; data?: { message?: string; errors?: string[]; issues?: StaffingIssue[] } };
+            };
+            if (axiosErr.response?.status === 422 && axiosErr.response.data?.issues?.length) {
+                // Problemas de contrato: se muestran agrupados en el panel de abajo, a todo el ancho.
+                setStaffingIssues(axiosErr.response.data.issues);
+            } else if (axiosErr.response?.status === 422 && axiosErr.response.data?.errors) {
                 setTemplateResult({
                     type: 'error',
                     message: axiosErr.response.data.message ?? 'El archivo tiene errores.',
@@ -635,6 +773,22 @@ export default function Programaciones() {
         setEditingPosition(null);
     };
 
+    // Activar / desactivar un puesto desde "Puestos de trabajo" sin abrir el formulario de edición.
+    const togglePositionActive = async (position: WorkPosition) => {
+        try {
+            const res = await axios.put(route('workPositions.update', position.id), {
+                attraction: position.attraction,
+                name: position.name,
+                active: !position.active,
+            });
+            setWorkPositionsList((ps) => ps.map((p) => (p.id === position.id ? res.data : p)));
+            notify(position.active ? 'Puesto desactivado' : 'Puesto activado');
+        } catch (err: unknown) {
+            const axiosErr = err as { response?: { data?: { message?: string } } };
+            notify(axiosErr.response?.data?.message ?? 'No se pudo cambiar el estado del puesto');
+        }
+    };
+
     const openCreatePosition = () => {
         setNewPositionNames(['']);
         setCreatingPosition(true);
@@ -691,9 +845,26 @@ export default function Programaciones() {
                             ))}
                         </select>
                     </label>
+                    <select
+                        value={exportAllWeekStart}
+                        onChange={(event) => setExportAllWeekStart(event.target.value)}
+                        title="Periodo a exportar"
+                        className="rounded-md border border-gray-300 px-2 py-1.5 text-xs"
+                    >
+                        <option value="">Mes completo</option>
+                        {currentMonthWeeks.map((week) => (
+                            <option key={week.start} value={week.start}>
+                                {week.label}
+                            </option>
+                        ))}
+                    </select>
                     <a
-                        href={route('programations.exportAllAreas', { year: new Date().getFullYear(), month: new Date().getMonth() + 1 })}
-                        title="Descarga un Excel con una hoja por cada área, del mes actual"
+                        href={route('programations.exportAllAreas', {
+                            year: new Date().getFullYear(),
+                            month: new Date().getMonth() + 1,
+                            ...(exportAllWeekStart ? { week_start: exportAllWeekStart } : {}),
+                        })}
+                        title="Descarga un Excel con todas las áreas, del mes actual o de la semana elegida"
                         className="flex items-center gap-1.5 rounded-md border border-[#95c020] px-3 py-1.5 text-xs font-semibold text-[#95c020] hover:bg-[#95c020] hover:text-white"
                     >
                         <FileSpreadsheet size={14} /> Exportar todas las áreas
@@ -835,6 +1006,16 @@ export default function Programaciones() {
                                         <small className="mt-1 block font-mono text-[9px] font-normal normal-case text-gray-400">
                                             {formatDay(date)}
                                         </small>
+                                        {operatingDays[toIsoDate(date)] && (
+                                            <span className="mt-1 flex items-center justify-center gap-1 normal-case">
+                                                <DayTypeBadge type={operatingDays[toIsoDate(date)]} />
+                                                <StaffingCount
+                                                    type={operatingDays[toIsoDate(date)]}
+                                                    scheduled={previewAssignmentsForDay(toIsoDate(date)).length}
+                                                    size="xs"
+                                                />
+                                            </span>
+                                        )}
                                     </th>
                                 ))}
                         </tr>
@@ -891,6 +1072,16 @@ export default function Programaciones() {
                                             const dayCalendar = draftedCalendarForDate(e.uid, dayISO);
                                             const dayColor = dayCalendar ? shiftColor(dayCalendar.shift_type) : null;
                                             const isOpen = openDayPicker?.uid === e.uid && openDayPicker?.dayISO === dayISO;
+                                            // De vacaciones o incapacitado ese día: se muestra la ausencia en vez del
+                                            // botón para asignar turno.
+                                            const absence = absenceFor(e.uid, dayISO);
+                                            if (absence && !dayCalendar) {
+                                                return (
+                                                    <td key={dayISO} className="border-b border-gray-100 px-1.5 py-2 text-center">
+                                                        <AbsenceBadge type={absence} short />
+                                                    </td>
+                                                );
+                                            }
                                             return (
                                                 <td key={dayISO} className="relative border-b border-gray-100 px-1.5 py-2 text-center">
                                                     <button
@@ -959,20 +1150,62 @@ export default function Programaciones() {
                     {areaId && (
                         <div className="mt-4 flex flex-wrap items-center gap-3">
                             <a
+                                // La plantilla arranca en "Desde" y cubre la "Duración" elegidas a la derecha.
                                 href={route('programations.downloadTemplate', {
                                     area: areaId,
-                                    year: new Date().getFullYear(),
-                                    month: new Date().getMonth() + 1,
+                                    start_date: startDate,
+                                    days: duration,
                                 })}
-                                title="Descarga un Excel en blanco con los empleados de tu área para diligenciar a mano"
+                                title={`Descarga un Excel en blanco con los empleados de tu área para el período ${formatRangeLabel(rangeDates)}`}
                                 className="flex items-center gap-1.5 rounded-md border border-[#95c020] px-3 py-1.5 text-xs font-semibold text-[#95c020] hover:bg-[#95c020] hover:text-white"
                             >
                                 <FileSpreadsheet size={14} /> Descargar plantilla
                             </a>
 
+                            {schedulingMode === 'variable' && (
+                                <select
+                                    value={templateCalendarId ?? ''}
+                                    onChange={(event) => setTemplateCalendarId(event.target.value ? Number(event.target.value) : null)}
+                                    disabled={uploadingTemplate}
+                                    title="Horario que se aplicará a todos los turnos de la plantilla"
+                                    className="rounded-md border border-gray-300 px-2 py-1.5 text-xs"
+                                >
+                                    <option value="">Horario de la plantilla…</option>
+                                    {sortedCalendars.map((calendar) => (
+                                        <option key={calendar.id} value={calendar.id}>
+                                            {shiftLabel(calendar)} ({calendar.hora_entrada?.slice(0, 5)} - {calendar.hora_salida?.slice(0, 5)})
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+
+                            {schedulingMode === 'fijo' &&
+                                TEMPLATE_SHIFTS.map(({ key, label }) => (
+                                    <select
+                                        key={key}
+                                        value={templateShiftCalendars[key] ?? ''}
+                                        onChange={(event) =>
+                                            setTemplateShiftCalendars((current) => ({
+                                                ...current,
+                                                [key]: event.target.value ? Number(event.target.value) : null,
+                                            }))
+                                        }
+                                        disabled={uploadingTemplate}
+                                        title={`Horario que se aplicará a las celdas marcadas como ${label}`}
+                                        className="rounded-md border border-gray-300 px-2 py-1.5 text-xs"
+                                    >
+                                        <option value="">{label}: elegir horario…</option>
+                                        {sortedCalendars.map((calendar) => (
+                                            <option key={calendar.id} value={calendar.id}>
+                                                {label}: {calendar.hora_entrada?.slice(0, 5)} - {calendar.hora_salida?.slice(0, 5)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                ))}
+
                             <label
                                 className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold ${
-                                    uploadingTemplate
+                                    uploadingTemplate || !templateShiftsChosen
                                         ? 'cursor-not-allowed border-gray-300 text-gray-400'
                                         : 'cursor-pointer border-[#a81c24] text-[#a81c24] hover:bg-[#a81c24] hover:text-white'
                                 }`}
@@ -983,7 +1216,7 @@ export default function Programaciones() {
                                     type="file"
                                     accept=".xlsx"
                                     className="hidden"
-                                    disabled={uploadingTemplate}
+                                    disabled={uploadingTemplate || !templateShiftsChosen}
                                     onChange={(event) => {
                                         const file = event.target.files?.[0];
                                           setTemplateFile(file ?? null);
@@ -1005,9 +1238,14 @@ export default function Programaciones() {
                         >
                             <p className="font-semibold">{templateResult.message}</p>
                             {templateResult.errors && templateResult.errors.length > 0 && (
-                                <p className="mt-1">
-                                    Se encontraron {templateResult.errors.length} error(es) en el archivo. Revisa el formato de las celdas de horario/código.
-                                </p>
+                                <>
+                                    <p className="mt-1">Se encontraron {templateResult.errors.length} error(es) en el archivo:</p>
+                                    <ul className="mt-1 max-h-60 list-disc space-y-0.5 overflow-y-auto pl-4">
+                                        {templateResult.errors.map((error, index) => (
+                                            <li key={index}>{error}</li>
+                                        ))}
+                                    </ul>
+                                </>
                             )}
                         </div>
                     )}
@@ -1015,15 +1253,36 @@ export default function Programaciones() {
                 <div className="w-full max-w-xs rounded-xl border border-[#a81c24] bg-white p-4 sm:w-72">
                     <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">Área asignada</p>
                     <strong className="block text-sm text-gray-900">{areaName}</strong>
-                    <label className="mt-3 block text-xs font-semibold text-gray-500">
-                        Desde
-                        <input
-                            type="date"
-                            value={startDate}
-                            onChange={(event) => setStartDate(event.target.value)}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
-                        />
-                    </label>
+                    {/* El período se elige por semanas (lunes a domingo): las flechas avanzan de a una. */}
+                    <div className="mt-3">
+                        <span className="text-xs font-semibold text-gray-500">Semana</span>
+                        <div className="mt-1 flex items-center gap-1 rounded-md border border-gray-300 px-1 py-1">
+                            <button
+                                type="button"
+                                onClick={() => shiftStartWeek(-1)}
+                                title="Semana anterior"
+                                className="flex h-7 w-7 flex-none items-center justify-center rounded text-gray-500 hover:bg-gray-100"
+                            >
+                                <ChevronLeft size={14} />
+                            </button>
+                            <div className="min-w-0 flex-1 text-center leading-tight">
+                                <p className="text-sm font-semibold text-gray-900">
+                                    Semana {startWeek.number} de <span className="capitalize">{startWeek.monthName}</span>
+                                </p>
+                                <p className="text-[11px] text-gray-500">
+                                    {formatDay(rangeDates[0])} – {formatDay(rangeDates[rangeDates.length - 1])}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => shiftStartWeek(1)}
+                                title="Semana siguiente"
+                                className="flex h-7 w-7 flex-none items-center justify-center rounded text-gray-500 hover:bg-gray-100"
+                            >
+                                <ChevronRight size={14} />
+                            </button>
+                        </div>
+                    </div>
                     <label className="mt-3 block text-xs font-semibold text-gray-500">
                         Duración
                         <select
@@ -1040,6 +1299,8 @@ export default function Programaciones() {
                     </label>
                 </div>
             </header>
+
+            <AlreadyScheduledPanel savedByDay={savedByDay} totalDays={rangeDates.length} operatingDays={operatingDays} />
 
             {templateResult?.type === 'success' && areaId && (
                 <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -1071,6 +1332,9 @@ export default function Programaciones() {
                 </div>
             )}
 
+            {/* Con la programación de la plantilla en revisión, se confirma o descarta desde ese
+                recuadro: esta barra solo se muestra si además hay cambios a mano por subir. */}
+            {(templateResult?.type !== 'success' || pendingCount > 0) && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <p className="m-0 text-sm text-gray-700">
                     {pendingCount > 0 ? (
@@ -1087,6 +1351,7 @@ export default function Programaciones() {
                         onClick={() => setDiscardingDraft(true)}
                         className="rounded-md border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
+                        Descartar
                     </button>
                     <button
                         disabled={(!pendingCount && !templateFile) || !!savingProgress || uploadingTemplate}
@@ -1097,10 +1362,17 @@ export default function Programaciones() {
                         className="flex items-center gap-1.5 rounded-md bg-[#a81c24] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         <Upload size={14} />
-                        {savingProgress ? `Subiendo ${savingProgress.done + 1}/${savingProgress.total}…` : uploadingTemplate ? 'Subiendo plantilla ...' : 'subir programacion '} 
+                        {savingProgress ? `Subiendo ${savingProgress.done + 1}/${savingProgress.total}…` : uploadingTemplate ? 'Subiendo plantilla ...' : 'subir programacion '}
                     </button>
                 </div>
             </div>
+            )}
+
+            {staffingIssues.length > 0 && (
+                <div ref={staffingIssuesRef} className="scroll-mt-6">
+                    <StaffingIssuesPanel issues={staffingIssues} onClose={() => setStaffingIssues([])} />
+                </div>
+            )}
 
             {schedulingMode === 'fijo' && (
                 <section>
@@ -1140,7 +1412,7 @@ export default function Programaciones() {
                                             return (
                                                 <span
                                                     key={iso}
-                                                    className={`flex h-8 items-center justify-center rounded-md text-xs font-medium ${
+                                                    className={`relative flex h-8 items-center justify-center rounded-md text-xs font-medium ${
                                                         isWorkDay
                                                             ? isWeekendDay
                                                                 ? 'bg-amber-500 text-white'
@@ -1151,6 +1423,7 @@ export default function Programaciones() {
                                                     }`}
                                                 >
                                                     {date.getDate()}
+                                                    {inRange && <DayTypeCorner type={operatingDays[iso]} />}
                                                 </span>
                                             );
                                         })}
@@ -1267,13 +1540,21 @@ export default function Programaciones() {
                             {schedulingMode === 'variable' ? 'Elige el día y asigna empleados a su puesto' : 'Asigna el horario'}
                         </h2>
                     </div>
-                    {schedulingMode === 'variable' && (
-                        <button
-                            onClick={openCreatePosition}
-                            className="ml-auto flex items-center gap-1.5 rounded-md border border-[#a81c24] px-3 py-1.5 text-xs font-bold text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
-                        >
-                            <Plus size={14} /> Nueva atracción / puesto
-                        </button>
+                    {schedulingMode === 'variable' && canManagePositions && (
+                        <div className="ml-auto flex items-center gap-2">
+                            <button
+                                onClick={() => setManagingPositions(true)}
+                                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                            >
+                                <Briefcase size={14} /> Puestos de trabajo ({workPositionsList.length})
+                            </button>
+                            <button
+                                onClick={openCreatePosition}
+                                className="flex items-center gap-1.5 rounded-md border border-[#a81c24] px-3 py-1.5 text-xs font-bold text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
+                            >
+                                <Plus size={14} /> Nueva atracción / puesto
+                            </button>
+                        </div>
                     )}
                 </div>
                 {schedulingMode === 'variable' && (
@@ -1297,6 +1578,10 @@ export default function Programaciones() {
                     </div>
                 ) : (
                     <DayAssignmentCalendar
+                        operatingDays={operatingDays}
+                        isClosedDay={(dayISO) =>
+                            isParkClosed(dayISO, auth?.user?.area_high_season_ranges ?? [], auth?.user?.park_closed_exit_times ?? DEFAULT_CLOSED_DAY_EXIT_TIMES)
+                        }
                         rangeDates={rangeDates}
                         calendarMonths={calendarMonths}
                         calendars={calendars}
@@ -1317,241 +1602,11 @@ export default function Programaciones() {
                         batches={batches}
                         scheduleByEmployee={scheduleByEmployee}
                         onSetEmployeeDate={setEmployeeDate}
-                        absenceForDay={() => null}
+                        absenceForDay={absenceFor}
                         onEditCalendar={(calendar) => setEditing(calendar)}
                         onCreateCalendar={() => setCreatingCalendar(true)}
                     />
                      )}
-            </section>
-
-            <section>
-                <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-                    <div>
-                        <h2 className="text-lg font-semibold text-gray-900">Vista previa</h2>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        {schedulingMode === 'fijo' && totalWeeks > 1 && (
-                            <div className="flex items-center gap-2 text-sm text-gray-800">
-                                <button
-                                    disabled={weekIndex === 0}
-                                    onClick={() => setWeekIndex((index) => Math.max(index - 1, 0))}
-                                    className="flex h-7 w-7 items-center justify-center rounded border border-[#a81c24] text-[#a81c24] hover:bg-[#a81c24] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#a81c24]"
-                                >
-                                    <ChevronLeft size={16} />
-                                </button>
-                                <span className="text-xs font-semibold whitespace-nowrap">{formatRangeLabel(visibleDates)}</span>
-                                <button
-                                    disabled={weekIndex === totalWeeks - 1}
-                                    onClick={() => setWeekIndex((index) => Math.min(index + 1, totalWeeks - 1))}
-                                    className="flex h-7 w-7 items-center justify-center rounded border border-[#a81c24] text-[#a81c24] hover:bg-[#a81c24] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#a81c24]"
-                                >
-                                    <ChevronRight size={16} />
-                                </button>
-                            </div>
-                        )}
-                        <span className="text-xs text-gray-500">
-                            {employeesList.length} empleados · {schedulingMode === 'variable' ? rangeDates.length : visibleDates.length} días
-                        </span>
-
-
-                    </div>
-                </div>
-                {schedulingMode === 'variable' ? (
-                    <div>
-                        <div className="flex flex-wrap gap-4">
-                            {calendarMonths.map((month) => (
-                                <div key={month} className="min-w-[700px] flex-1 rounded-xl border border-gray-200 bg-white p-4">
-                                    <h3 className="mb-3 text-sm font-semibold text-gray-900 capitalize">
-                                        {toDate(`${month}-01`).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}
-                                    </h3>
-                                    <div className="mb-1 grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-gray-400">
-                                        {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, index) => (
-                                            <span key={`${day}-${index}`}>{day}</span>
-                                        ))}
-                                    </div>
-                                    <div className="grid grid-cols-7 gap-1 text-center">
-                                        {monthCalendar(month).map((date, index) => {
-                                            if (!date) return <span key={`empty-${index}`} />;
-                                            const iso = toIsoDate(date);
-                                            const inRange = rangeDates.some((rangeDate) => toIsoDate(rangeDate) === iso);
-                                            const rows = inRange ? previewAssignmentsForDay(iso) : [];
-                                            const hasDraftRow = rows.some((r) => r.isDraft);
-                                            const dayCalendar = rows[0] ? calendars.find((c) => c.id === rows[0].calendarId) : null;
-                                            const isOpen = openPreviewDayISO === iso;
-                                            return (
-                                                <button
-                                                    key={iso}
-                                                    disabled={!inRange}
-                                                    onClick={() => setOpenPreviewDayISO((cur) => (cur === iso ? null : iso))}
-                                                    title={iso}
-                                                    className={`flex h-9 flex-col items-center justify-center gap-0.5 rounded-md text-xs font-medium transition-colors ${
-                                                        !inRange ? 'text-gray-300' : isOpen ? 'bg-[#a81c24] text-white' : 'text-gray-700 hover:bg-gray-50'
-                                                    }`}
-                                                >
-                                                    <span>{date.getDate()}</span>
-                                                    {rows.length > 0 && (
-                                                        <span className={`flex items-center gap-0.5 text-[9px] font-bold ${isOpen ? 'text-white' : 'text-gray-500'}`}>
-                                                            <i
-                                                                className={`inline-block h-1.5 w-1.5 rounded-full ${
-                                                                    isOpen ? 'bg-white' : dayCalendar ? shiftColor(dayCalendar.shift_type).dot : 'bg-gray-400'
-                                                                } ${!isOpen && hasDraftRow ? 'opacity-60' : ''}`}
-                                                            />
-                                                            {rows.length}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        {openPreviewDayISO && (
-                            <div className="mt-4 rounded-xl border border-gray-200 bg-white p-5">
-                                <div className="mb-4 flex items-center justify-between">
-                                    <h3 className="text-sm font-semibold text-gray-900 capitalize">
-                                        {toDate(openPreviewDayISO).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
-                                    </h3>
-                                    <button onClick={() => setOpenPreviewDayISO(null)} title="Cerrar" className="text-gray-400 hover:text-gray-600">
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                                {(() => {
-                                    const rows = previewAssignmentsForDay(openPreviewDayISO);
-                                    if (rows.length === 0) {
-                                        return <p className="text-sm text-gray-500">Nadie tiene turno asignado este día.</p>;
-                                    }
-                                    return (
-                                        <div className="divide-y divide-gray-100">
-                                            {rows.map(({ employee, workPositionId, calendarId, isDraft }) => {
-                                                const cal = calendars.find((c) => c.id === calendarId) ?? null;
-                                                const wp = workPositionId ? workPositionsList.find((p) => p.id === workPositionId) : null;
-                                                return (
-                                                    <div key={employee.uid} className="flex items-center gap-3 py-2.5">
-                                                        <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-600">
-                                                            {initials(employee.name)}
-                                                        </span>
-                                                        <div className="flex min-w-0 flex-1 items-baseline gap-2">
-                                                            <strong className="flex-none text-sm text-gray-900">{employee.name}</strong>
-                                                            <span className="min-w-0 truncate text-xs text-neutral-500">
-                                                                {wp ? `${wp.attraction} · ${wp.name}` : '—'}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex flex-none items-center gap-2">
-                                                            <span
-                                                                className={`flex-none rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap ${
-                                                                    employee.cargo?.name ? 'bg-gray-100 text-gray-600' : 'text-gray-300'
-                                                                }`}
-                                                            >
-                                                                {employee.cargo?.name ?? '—'}
-                                                            </span>
-                                                            {cal && (
-                                                                <span
-                                                                    className={`inline-flex flex-none items-center gap-1 rounded px-2 py-1.5 font-mono text-[10px] ${
-                                                                        isDraft
-                                                                            ? `border border-dashed ${shiftColor(cal.shift_type).border} ${shiftColor(cal.shift_type).text}`
-                                                                            : `text-white ${shiftColor(cal.shift_type).badge}`
-                                                                    }`}
-                                                                    title={isDraft ? 'Pendiente por subir' : 'Ya guardado'}
-                                                                >
-                                                                    <b className="font-sans text-xs font-semibold">{shiftBadgeLetter(cal)}</b>
-                                                                    {formatHours(cal)}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    );
-                                })()}
-                            </div>
-                        )}
-                    </div>
-                ) : (
-                    <div className="overflow-auto rounded-xl border border-gray-200 bg-white">
-                        <table className="w-full min-w-[800px] border-collapse">
-                            <thead>
-                                <tr>
-                                    <th className="border-b border-gray-100 bg-gray-50 px-3 py-3 text-left text-[10px] font-bold text-gray-500 uppercase">
-                                        Empleado
-                                    </th>
-                                    {visibleDates.map((date) => (
-                                        <th
-                                            key={toIsoDate(date)}
-                                            className="border-b border-gray-100 bg-gray-50 px-3 py-3 text-center text-[10px] font-bold text-gray-500 uppercase"
-                                        >
-                                            {date.toLocaleDateString('es-CO', { weekday: 'short' }).replace('.', '')}
-                                            <small className="mt-1 block font-mono text-[9px] font-normal normal-case text-gray-400">
-                                                {formatDay(date)}
-                                            </small>
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {employeesList.map((e) => (
-                                    <tr key={e.uid}>
-                                        <td className="flex items-center gap-2 border-b border-gray-100 px-3 py-3 text-left text-xs">
-                                            <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-gray-100 text-[8px] font-bold text-gray-600">
-                                                {initials(e.name)}
-                                            </span>
-                                            <span>
-                                                <strong className="block text-gray-900">{e.name}</strong>
-                                            </span>
-                                        </td>
-                                        {visibleDates.map((date) => {
-                                            const dayISO = toIsoDate(date);
-                                            const programation = getProgramationForDay(scheduleByEmployee[e.uid], dayISO);
-                                            const cellCalendar = programation ? getCalendarForDay(programation, dayISO) : null;
-                                            const draftBatch = !cellCalendar
-                                                ? batches.find((b) => b.employeeUids.includes(e.uid) && batchCoversDay(b, dayISO))
-                                                : undefined;
-                                            const draftCellCalendar = draftBatch ? (calendars.find((c) => c.id === draftBatch.calendarId) ?? null) : null;
-                                            return (
-                                                <td key={dayISO} className="border-b border-gray-100 px-2 py-3 text-center text-[10px]">
-                                                    {cellCalendar ? (
-                                                        <span
-                                                            className={`inline-flex items-center gap-1 rounded px-2 py-1.5 font-mono text-white ${shiftColor(cellCalendar.shift_type).badge}`}
-                                                        >
-                                                            <b className="font-sans text-xs font-semibold">{shiftBadgeLetter(cellCalendar)}</b>
-                                                            {formatHours(cellCalendar)}
-                                                        </span>
-                                                    ) : draftCellCalendar ? (
-                                                        <span
-                                                            className={`inline-flex items-center gap-1 rounded border border-dashed px-2 py-1.5 font-mono ${shiftColor(draftCellCalendar.shift_type).border} ${shiftColor(draftCellCalendar.shift_type).text}`}
-                                                            title="Pendiente por subir"
-                                                        >
-                                                            <b className="font-sans text-xs font-semibold">{shiftBadgeLetter(draftCellCalendar)}</b>
-                                                            {formatHours(draftCellCalendar)}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-gray-400">Libre</span>
-                                                    )}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-                <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-                    <span className="font-bold text-gray-800"></span>
-                    {calendars.map((item) => (
-                        <span key={item.id} className="flex items-center gap-1">
-                            <i className={`inline-block h-2 w-2 rounded-full ${shiftColor(item.shift_type).dot}`} />{' '}
-                            {shiftLabel(item)} <code className="font-mono text-gray-700">{formatHours(item)}</code>
-                        </span>
-                    ))}
-                    <span className="flex items-center gap-1">
-                        <i className="inline-block h-2 w-2 rounded-full bg-gray-300" /> Libre / sin asignar
-                    </span>
-                    <span className="flex items-center gap-1">
-                        <i className="inline-block h-2 w-2 rounded-full border border-dashed border-gray-400" /> Punteado = en el borrador, sin subir
-                    </span>
-                </div>
             </section>
 
             {editing !== null && (() => {
@@ -1720,6 +1775,17 @@ export default function Programaciones() {
                     </div>
                 );
             })()}
+            {managingPositions && (
+                <WorkPositionsManager
+                    positions={workPositionsList}
+                    onCreate={openCreatePosition}
+                    onEdit={setEditingPosition}
+                    onDelete={setDeletingPosition}
+                    onToggleActive={togglePositionActive}
+                    onClose={() => setManagingPositions(false)}
+                />
+            )}
+
             {creatingPosition && (
                 <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
                     <form className="relative w-full max-w-md rounded-2xl bg-white p-7 shadow-xl" onSubmit={createPosition}>

@@ -61,9 +61,10 @@ class AreaController extends Controller
 
         return Inertia::render('Areas', [
             'areas' => $areas,
-            'eligibleEmployees' => Employee::whereDoesntHave('user')->orderBy('name')->get(['uid', 'name']),
+            'eligibleEmployees' => Employee::whereDoesntHave('user')->orderByName()->get(['uid', 'nombres', 'apellidos']),
             'currentRouteName' => 'areas',
-            'highSeasonRanges' => CompanySetting::get('high_season_ranges', []),
+            // Solo lectura: la temporada alta se define en el calendario operativo.
+            'highSeasonRanges' => \App\Services\OperatingCalendar::highSeasonRanges(),
             'vacationReminderMonths' => CompanySetting::get('vacation_reminder_months', 3),
         ]);
     }
@@ -71,35 +72,9 @@ class AreaController extends Controller
     /**
      * ===============================
      *
-     *  Rangos de fechas de temporada alta (GLOBAL, para toda la empresa — no por área): dentro
-     *  de esos rangos NO aplica el recorte de horario corto de lunes/martes en áreas de jornada
-     *  fija, política que solo rige en temporada baja. Rangos exactos (no meses completos)
-     *  porque la temporada alta puede empezar/terminar a mitad de mes (ej. "hasta el 18 de
-     *  agosto").
-     *
-     * ===============================
-     */
-
-    public function updateHighSeasonRanges(Request $request)
-    {
-        $validated = $request->validate([
-            'high_season_ranges' => 'present|array',
-            'high_season_ranges.*.start' => 'required|date_format:Y-m-d',
-            'high_season_ranges.*.end' => 'required|date_format:Y-m-d|after_or_equal:high_season_ranges.*.start',
-        ]);
-
-        $ranges = array_values($validated['high_season_ranges']);
-        CompanySetting::set('high_season_ranges', $ranges);
-
-        return response()->json(['high_season_ranges' => $ranges]);
-    }
-
-    /**
-     * ===============================
-     *
      *  Meses de anticipación con que se avisa a un coordinador que una "reserva de mes" de
      *  vacaciones (ver EmployeeAbsenceController::storeReservation()) ya necesita fechas
-     *  exactas definidas — configuración global, igual patrón que high_season_ranges.
+     *  exactas definidas — configuración global guardada en CompanySetting.
      *
      * ===============================
      */
@@ -216,7 +191,7 @@ class AreaController extends Controller
 
         $employees = $area->employees()
             ->with(['cargo', 'contrato'])
-            ->orderBy('name')
+            ->orderByName()
             ->get();
 
         // Turno de HOY por empleado, para mostrarlo junto al cargo en la tarjeta.

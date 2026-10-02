@@ -101,6 +101,15 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
 
     const [cancelTarget, setCancelTarget] = useState<AbsenceRow | null>(null);
 
+    // Edición (solo admin): fechas, reemplazo y notas de una ausencia activa.
+    const [editTarget, setEditTarget] = useState<AbsenceRow | null>(null);
+    const [editStart, setEditStart] = useState('');
+    const [editEnd, setEditEnd] = useState('');
+    const [editReplacement, setEditReplacement] = useState<EmployeeOption | null>(null);
+    const [editNotes, setEditNotes] = useState('');
+    const [editError, setEditError] = useState<string | null>(null);
+    const [editSubmitting, setEditSubmitting] = useState(false);
+
     // Filtro de rango de fechas sobre la lista (en cliente: la lista completa ya llega por
     // props, sin paginación). Se queda una ausencia si su rango [start_date, end_date] se
     // cruza con [filterFrom, filterTo] — mismo criterio que un solapamiento de fechas normal.
@@ -172,9 +181,8 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
         return !absentSchedule.some((r) => startDate >= r.start_date && startDate <= r.end_date);
     }, [type, startDate, absentSchedule]);
 
-    // Solo incapacidad exige reemplazo (cubrir el puesto suele ser crítico) — vacaciones
-    // solo bloquea la disponibilidad del empleado, sin necesidad de que nadie más lo cubra.
-    const requiresReplacement = type === 'incapacidad';
+    // El reemplazo es opcional: sin él solo se bloquean los días del empleado ausente.
+    const requiresReplacement = false;
 
     // El reemplazo solo puede salir de la MISMA área que el ausente elegido — y solo se
     // habilita una vez elegido el ausente, para no dejar mezclar áreas por accidente.
@@ -202,11 +210,6 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
             setFormError('Completa empleado ausente y el rango de fechas.');
             return;
         }
-        if (requiresReplacement && !replacementEmployee) {
-            setFormError('Una incapacidad necesita un empleado que la reemplace.');
-            return;
-        }
-
         setSubmitting(true);
         setFormError(null);
 
@@ -230,6 +233,53 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
                     setSubmitting(false);
                     setFormError(Object.values(errors as Record<string, string>)[0] ?? 'No se pudo registrar la ausencia.');
                 },
+            },
+        );
+    };
+
+    const editAbsentEmployee = useMemo(
+        () => (employees as EmployeeOption[]).find((e) => e.uid === editTarget?.employee?.uid) ?? null,
+        [employees, editTarget],
+    );
+    const editReplacementCandidates = useMemo(
+        () =>
+            editAbsentEmployee
+                ? (employees as EmployeeOption[]).filter((e) => e.area_id === editAbsentEmployee.area_id && e.uid !== editAbsentEmployee.uid)
+                : [],
+        [employees, editAbsentEmployee],
+    );
+
+    const openEdit = (a: AbsenceRow) => {
+        setEditTarget(a);
+        setEditStart(a.start_date?.slice(0, 10) ?? '');
+        setEditEnd(a.end_date?.slice(0, 10) ?? '');
+        setEditReplacement(
+            a.replacement_employee ? ((employees as EmployeeOption[]).find((e) => e.uid === a.replacement_employee!.uid) ?? null) : null,
+        );
+        setEditNotes(a.notes ?? '');
+        setEditError(null);
+    };
+
+    const submitEdit = () => {
+        if (!editTarget || !editStart || !editEnd) {
+            setEditError('Completa el rango de fechas.');
+            return;
+        }
+        setEditSubmitting(true);
+        setEditError(null);
+        router.put(
+            route('ausencias.update', editTarget.id),
+            {
+                start_date: editStart,
+                end_date: editEnd,
+                replacement_employee_uid: editReplacement?.uid ?? null,
+                notes: editNotes || null,
+            },
+            {
+                preserveScroll: true,
+                onSuccess: () => setEditTarget(null),
+                onError: (errors) => setEditError(Object.values(errors as Record<string, string>)[0] ?? 'No se pudo actualizar la ausencia.'),
+                onFinish: () => setEditSubmitting(false),
             },
         );
     };
@@ -363,12 +413,23 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
                                         {canManage && (
                                             <td className="px-4 py-3 text-right">
                                                 {a.status === 'Activa' && (
-                                                    <button
-                                                        onClick={() => setCancelTarget(a)}
-                                                        className="rounded-md border border-[#a81c24] px-3 py-1.5 text-xs font-bold text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
-                                                    >
-                                                        Cancelar
-                                                    </button>
+                                                    <div className="flex justify-end gap-2">
+                                                        {/* Las reservas de mes sin fechas se editan desde el Plan de vacaciones. */}
+                                                        {isAdmin && a.start_date && (
+                                                            <button
+                                                                onClick={() => openEdit(a)}
+                                                                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                                                            >
+                                                                Editar
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => setCancelTarget(a)}
+                                                            className="rounded-md border border-[#a81c24] px-3 py-1.5 text-xs font-bold text-[#a81c24] hover:bg-[#a81c24] hover:text-white"
+                                                        >
+                                                            Cancelar
+                                                        </button>
+                                                    </div>
                                                 )}
                                             </td>
                                         )}
@@ -488,6 +549,93 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
                                 className="rounded-md bg-[#a81c24] px-4 py-2 text-xs font-bold text-white hover:bg-[#c9252d] disabled:opacity-60"
                             >
                                 {submitting ? 'Guardando...' : 'Registrar ausencia'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {editTarget && (
+                <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+                    <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
+                        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+                            <h2 className="text-base font-semibold text-gray-900">
+                                Editar {TYPE_LABELS[editTarget.type].toLowerCase()} · {editTarget.employee?.name ?? ''}
+                            </h2>
+                            <button onClick={() => setEditTarget(null)} className="text-gray-400 hover:text-gray-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 px-6 py-5">
+                            {editError && <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{editError}</div>}
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold text-gray-500">Desde</label>
+                                    <input
+                                        type="date"
+                                        value={editStart}
+                                        onChange={(e) => setEditStart(e.target.value)}
+                                        className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold text-gray-500">Hasta</label>
+                                    <input
+                                        type="date"
+                                        value={editEnd}
+                                        min={editStart || undefined}
+                                        onChange={(e) => setEditEnd(e.target.value)}
+                                        className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="mb-1 flex items-center justify-between">
+                                    <label className="block text-xs font-semibold text-gray-500">Reemplazo (opcional)</label>
+                                    {editReplacement && (
+                                        <button onClick={() => setEditReplacement(null)} className="text-xs font-semibold text-[#a81c24] hover:underline">
+                                            Quitar reemplazo
+                                        </button>
+                                    )}
+                                </div>
+                                <Autocomplete<EmployeeOption>
+                                    items={editReplacementCandidates}
+                                    getLabel={(e) => e.name}
+                                    value={editReplacement}
+                                    placeholder="Sin reemplazo"
+                                    onSelect={(e) => setEditReplacement(e)}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="mb-1 block text-xs font-semibold text-gray-500">Notas (opcional)</label>
+                                <textarea
+                                    value={editNotes}
+                                    onChange={(e) => setEditNotes(e.target.value)}
+                                    rows={2}
+                                    className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 rounded-b-2xl border-t border-gray-100 bg-gray-50 px-6 py-4">
+                            <button
+                                type="button"
+                                onClick={() => setEditTarget(null)}
+                                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                            >
+                                Volver
+                            </button>
+                            <button
+                                type="button"
+                                disabled={editSubmitting}
+                                onClick={submitEdit}
+                                className="rounded-md bg-[#a81c24] px-4 py-2 text-xs font-bold text-white hover:bg-[#c9252d] disabled:opacity-60"
+                            >
+                                {editSubmitting ? 'Guardando...' : 'Guardar cambios'}
                             </button>
                         </div>
                     </div>

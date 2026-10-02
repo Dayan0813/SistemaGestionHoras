@@ -53,6 +53,7 @@ interface PlanVacacionesPageProps {
     auth?: {
         user?: {
             permissions?: string[];
+            roles?: string[];
             vacation_reminder_months?: number;
         } | null;
     };
@@ -62,10 +63,13 @@ interface Tanda {
     id: number;
     startDate: string;
     endDate: string;
+    // Mes que muestra el calendario de esta tanda ('YYYY-MM'); vacío = el mes del paso 1.
+    // Cada tanda navega por su cuenta: los días se pueden repartir en meses distintos.
+    month: string;
 }
 
 let nextTandaId = 1;
-const newTanda = (): Tanda => ({ id: nextTandaId++, startDate: '', endDate: '' });
+const newTanda = (month = ''): Tanda => ({ id: nextTandaId++, startDate: '', endDate: '', month });
 
 // Laravel serializa start_date/end_date (cast 'date') como datetime ISO completo
 // ("2026-01-12T00:00:00.000000Z"), no como solo "YYYY-MM-DD" — se toma únicamente la parte de
@@ -284,6 +288,9 @@ const RangeCalendar = ({
 const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
     const { employees, highSeasonRanges, vacationReminderMonths, auth, allAreas, selectedArea } = usePage().props as unknown as PlanVacacionesPageProps;
     const canManage = auth?.user?.permissions?.includes('ausencias.crear') ?? false;
+    // Advertencia que devuelve el backend cuando se registra en temporada alta (o el admin
+    // cruzado con las vacaciones de otro empleado): se guarda igual, pero conviene que lo vea.
+    const [warningNotice, setWarningNotice] = useState<string | null>(null);
     const reminderMonths: number = vacationReminderMonths ?? auth?.user?.vacation_reminder_months ?? 3;
     // aux_admin_th y aux_th no tienen área propia: el backend solo devuelve empleados de la
     // área elegida en "?area=" (nunca todas mezcladas) — mismo patrón que Ausencias.tsx y
@@ -339,22 +346,33 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
     );
 
     const totalBusinessDays = useMemo(() => tandaDetails.reduce((sum, t) => sum + t.businessDays.length, 0), [tandaDetails]);
-    const hasHighSeasonConflict = tandaDetails.some((t) => t.highSeasonDay !== null);
     const saldo = planEmployee?.dias_vacaciones_disponibles ?? TOTAL_VACATION_DAYS;
     const exceedsBalance = totalBusinessDays > saldo;
     const hasIncompleteTanda = tandas.some((t) => !t.startDate || !t.endDate);
     // "Hasta" anterior a "Desde" — se avisa en el momento en vez de dejar que el botón
     // simplemente quede deshabilitado sin explicación (businessDaysInRange devuelve [] en ese caso).
     const hasInvertedTanda = tandas.some((t) => t.startDate && t.endDate && t.endDate < t.startDate);
-    // Las tandas deben caer dentro del mes elegido en el paso 1 — no tiene sentido reservar
-    // "marzo" y luego definir fechas de febrero.
-    const hasTandaOutsideMonth = !!planMonth && tandas.some((t) => t.startDate && !t.startDate.startsWith(planMonth));
+    // Dos tandas del mismo plan no pueden compartir días: ese día se descontaría dos veces del
+    // saldo (mismo chequeo que storePlan() en el backend).
+    const hasOverlappingTandas = useMemo(() => {
+        const complete = tandas.filter((t) => t.startDate && t.endDate && t.endDate >= t.startDate);
+        return complete.some((a, i) => complete.some((b, j) => i < j && a.startDate <= b.endDate && b.startDate <= a.endDate));
+    }, [tandas]);
 
     const canSubmit =
-        !!planMonth && !hasIncompleteTanda && !hasInvertedTanda && !hasTandaOutsideMonth && !exceedsBalance && !hasHighSeasonConflict && totalBusinessDays > 0;
+        !!planMonth &&
+        !hasIncompleteTanda &&
+        !hasInvertedTanda &&
+        !hasOverlappingTandas &&
+        !exceedsBalance &&
+        totalBusinessDays > 0;
 
-    const MAX_TANDAS = 2;
-    const addTanda = () => setTandas((prev) => (prev.length >= MAX_TANDAS ? prev : [...prev, newTanda()]));
+    // Sin un tope fijo de tandas: cada tanda tiene al menos un día hábil, así que el máximo
+    // natural es el saldo de días del empleado.
+    const MAX_TANDAS = Math.max(1, saldo);
+    const addTanda = () =>
+        setTandas((prev) => (prev.length >= MAX_TANDAS ? prev : [...prev, newTanda(prev[prev.length - 1]?.month || planMonth)]));
+    const setTandaMonth = (id: number, month: string) => setTandas((prev) => prev.map((t) => (t.id === id ? { ...t, month } : t)));
     const removeTanda = (id: number) => setTandas((prev) => (prev.length > 1 ? prev.filter((t) => t.id !== id) : prev));
     const updateTanda = (id: number, field: 'startDate' | 'endDate', value: string) =>
         setTandas((prev) => prev.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
@@ -383,7 +401,8 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                 },
                 { headers: { Accept: 'application/json' } },
             )
-            .then(() => {
+            .then((res) => {
+                setWarningNotice(res.data?.warning ?? null);
                 closePlanModal();
                 router.reload({ only: ['employees'] });
             })
@@ -442,7 +461,7 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
     const editAvailableBalance = (editTarget?.employee.dias_vacaciones_disponibles ?? 0) + (editTarget?.absence.days ?? 0);
     const editExceedsBalance = editBusinessDays.length > editAvailableBalance;
     const editInverted = !!editStartDate && !!editEndDate && editEndDate < editStartDate;
-    const canSubmitEdit = !!editStartDate && !!editEndDate && !editInverted && editBusinessDays.length > 0 && !editExceedsBalance && !editHighSeasonDay;
+    const canSubmitEdit = !!editStartDate && !!editEndDate && !editInverted && editBusinessDays.length > 0 && !editExceedsBalance;
 
     const submitEdit = () => {
         if (!editTarget || !canSubmitEdit) return;
@@ -456,7 +475,8 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                 { start_date: editStartDate, end_date: editEndDate, expects_json: true },
                 { headers: { Accept: 'application/json' } },
             )
-            .then(() => {
+            .then((res) => {
+                setWarningNotice(res.data?.warning ?? null);
                 closeEditModal();
                 router.reload({ only: ['employees'] });
             })
@@ -470,6 +490,15 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
         <div>
             <div className="container mx-auto mt-10">
                 <h1 className="text-2xl font-bold text-gray-900">Plan de vacaciones</h1>
+                {warningNotice && (
+                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        <AlertTriangle size={16} className="mt-0.5 flex-none" />
+                        <span className="flex-1">{warningNotice}</span>
+                        <button onClick={() => setWarningNotice(null)} className="text-amber-600 hover:text-amber-800" title="Cerrar">
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
                 <p className="mt-1 text-sm text-gray-500">
                     Empleados con contrato fijo — saldo de {TOTAL_VACATION_DAYS} días hábiles al año, fraccionables en varias tandas.
                 </p>
@@ -615,13 +644,15 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                                     <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[#a81c24] text-xs font-bold text-white">
                                         1
                                     </span>
-                                    <span className="text-sm font-semibold text-gray-800">Mes de las vacaciones</span>
+                                    <span className="text-sm font-semibold text-gray-800">Mes de inicio</span>
                                 </div>
                                 <div className="mt-2">
                                     <MonthPicker value={planMonth} onChange={setPlanMonth} />
                                 </div>
                                 {!planMonth ? (
-                                    <p className="mt-2 text-xs text-[#a81c24]">Elige primero el mes para poder definir los días de la tanda.</p>
+                                    <p className="mt-2 text-xs text-[#a81c24]">
+                                        Elige el mes donde empieza la primera tanda. Cada tanda puede moverse a cualquier otro mes con las flechas.
+                                    </p>
                                 ) : (
                                     <label className="mt-3 flex items-center gap-2 text-xs font-medium text-gray-600">
                                         <input type="checkbox" checked={reserveOnly} onChange={(e) => setReserveOnly(e.target.checked)} />
@@ -636,9 +667,9 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                                 </p>
                             ) : (
                                 <>
-                                    {hasTandaOutsideMonth && (
+                                    {hasOverlappingTandas && (
                                         <p className="flex items-center gap-1 text-xs font-semibold text-red-600">
-                                            <AlertTriangle size={13} /> Las fechas deben caer dentro de {formatMonth(planMonth)}.
+                                            <AlertTriangle size={13} /> Hay tandas que se cruzan entre sí; cada día solo puede estar en una tanda.
                                         </p>
                                     )}
                                     <div className="flex items-center justify-between rounded-lg bg-gray-50 px-4 py-2.5">
@@ -695,18 +726,19 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                                                 )}
 
                                                 <RangeCalendar
-                                                    monthIso={planMonth}
+                                                    monthIso={t.month || planMonth}
                                                     startDate={t.startDate}
                                                     endDate={t.endDate}
                                                     onPick={(start, end) => {
                                                         updateTanda(t.id, 'startDate', start);
                                                         updateTanda(t.id, 'endDate', end);
                                                     }}
+                                                    onMonthChange={(month) => setTandaMonth(t.id, month)}
                                                 />
 
                                                 {t.highSeasonDay && (
-                                                    <p className="mt-1 flex items-center gap-1 text-xs text-red-600">
-                                                        <AlertTriangle size={13} /> Cae en temporada alta ({formatIsoDate(t.highSeasonDay)}).
+                                                    <p className="mt-1 flex items-center gap-1 text-xs text-amber-600">
+                                                        <AlertTriangle size={13} /> Cae en temporada alta ({formatIsoDate(t.highSeasonDay)}). Se puede registrar igual.
                                                     </p>
                                                 )}
                                             </div>
@@ -721,7 +753,7 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                                             <Plus size={14} /> Agregar tanda
                                         </button>
                                     ) : (
-                                        <p className="text-xs text-gray-400">Máximo {MAX_TANDAS} tandas por plan.</p>
+                                        <p className="text-xs text-gray-400">No se pueden agregar más tandas que días disponibles ({MAX_TANDAS}).</p>
                                     )}
                                 </>
                             )}
@@ -804,8 +836,8 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                                 </p>
                             )}
                             {editHighSeasonDay && (
-                                <p className="flex items-center gap-1 text-xs text-red-600">
-                                    <AlertTriangle size={13} /> Cae en temporada alta ({formatIsoDate(editHighSeasonDay)}).
+                                <p className="flex items-center gap-1 text-xs text-amber-600">
+                                    <AlertTriangle size={13} /> Cae en temporada alta ({formatIsoDate(editHighSeasonDay)}). Se puede registrar igual.
                                 </p>
                             )}
                         </div>

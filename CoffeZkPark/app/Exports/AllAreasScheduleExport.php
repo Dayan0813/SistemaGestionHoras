@@ -40,11 +40,17 @@ class AllAreasScheduleExport implements FromArray, WithTitle, WithEvents
     public function __construct(
         private int $year,
         private int $month,
+        // Opcional (Y-m-d de un lunes): exporta solo esa semana en vez del mes completo.
+        private ?string $weekStart = null,
     ) {
     }
 
     public function title(): string
     {
+        if ($this->weekStart !== null) {
+            return substr(sprintf('Todas las áreas Sem %s', \Carbon\Carbon::parse($this->weekStart)->format('d-m')), 0, 31);
+        }
+
         return substr(sprintf('Todas las áreas %02d-%d', $this->month, $this->year), 0, 31);
     }
 
@@ -60,10 +66,16 @@ class AllAreasScheduleExport implements FromArray, WithTitle, WithEvents
         $this->hoursHeaderRows = [];
         $this->hoursLastRows = [];
         $maxColumns = 1;
-        $highSeasonRanges = \App\Models\CompanySetting::get('high_season_ranges', []);
+        $highSeasonRanges = \App\Services\OperatingCalendar::highSeasonRanges();
 
         foreach ($areas as $areaModel) {
-            $employees = AreaScheduleQuery::forMonth($areaModel->id, $this->year, $this->month);
+            $employees = $this->weekStart !== null
+                ? AreaScheduleQuery::forRange(
+                    $areaModel->id,
+                    $this->weekStart,
+                    \Carbon\Carbon::parse($this->weekStart)->addDays(6)->toDateString(),
+                )
+                : AreaScheduleQuery::forMonth($areaModel->id, $this->year, $this->month);
             // fijoLabelColumns=1: en esta hoja combinada todas las áreas deben compartir el mismo
             // punto de partida de columnas de día, sin importar su modo de programación.
             $export = new AreaScheduleExport(
@@ -74,10 +86,11 @@ class AllAreasScheduleExport implements FromArray, WithTitle, WithEvents
                 fijoLabelColumns: 1,
                 highSeasonRanges: $highSeasonRanges,
                 areaId: (int) $areaModel->id,
+                weekStart: $this->weekStart,
             );
             $block = $export->buildRows();
 
-            $maxColumns = max($maxColumns, $block['labelColumns'] + $this->daysInMonthCount());
+            $maxColumns = max($maxColumns, $block['labelColumns'] + count($export->periodDays()));
             $this->hoursColumns = $block['hoursColumns'];
 
             $offset = count($rows);
@@ -170,10 +183,5 @@ class AllAreasScheduleExport implements FromArray, WithTitle, WithEvents
                 }
             },
         ];
-    }
-
-    private function daysInMonthCount(): int
-    {
-        return \Carbon\Carbon::create($this->year, $this->month, 1)->daysInMonth;
     }
 }

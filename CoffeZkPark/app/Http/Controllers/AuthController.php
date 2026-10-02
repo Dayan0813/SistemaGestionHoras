@@ -96,8 +96,8 @@ class AuthController extends Controller
 
         $employees = Employee::query()
             ->whereDoesntHave('user') // evita duplicar empleado
-            ->orderBy('name')
-            ->get(['uid', 'name']);
+            ->orderByName()
+            ->get(['uid', 'nombres', 'apellidos']);
 
         return Inertia::render('Auth/Register', [
             'employees' => $employees,
@@ -127,7 +127,7 @@ class AuthController extends Controller
         }
 
         return Inertia::render('Auth/Register', [
-            'employees' => Employee::orderBy('name')->get(['uid', 'name']),
+            'employees' => Employee::orderByName()->get(['uid', 'nombres', 'apellidos']),
             'roles' => ['admin'], // primer usuario SIEMPRE admin
         ]);
     }

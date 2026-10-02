@@ -1,7 +1,7 @@
 // resources/js/Pages/Inicio.tsx
 import MainLayout from '@/Layouts/MainLayout';
 import { Link } from '@inertiajs/react';
-import { BrainCircuit, ClipboardMinus, Hourglass, UserRoundPlus } from 'lucide-react';
+import { BrainCircuit, CalendarDays, ClipboardMinus, Hourglass, UserRoundPlus } from 'lucide-react';
 import React from 'react';
 
 interface CurrentProps {
@@ -54,7 +54,15 @@ const Servicios = ({ currentRouteName }: CurrentProps) => {
                         <p className="text-[#a81c24]">Registra o lee las vacaciones</p>
                     </div>
                     </Link>
-                    <Link href={route('ausencias.store')}>
+                    <Link href={route('operatingCalendar.index')}>
+                    <div className="rounded-lg border border-[#a81c24] p-6 text-[#a81c24] shadow-md">
+                        <h3 className="mb-3 flex items-center text-xl font-semibold">
+                            Calendario operativo <CalendarDays className="ml-2" />
+                        </h3>
+                        <p className="text-[#a81c24]">Tipo de cada día (AA, A, B, C) y personal mínimo por área</p>
+                    </div>
+                    </Link>
+                    <Link href={route('ausencias')}>
                     <div className="rounded-lg border border-[#a81c24] p-6 text-[#a81c24] shadow-md">
                         <h3 className="mb-3 flex items-center text-xl font-semibold">
                             Novedades<Hourglass className="ml-2" />

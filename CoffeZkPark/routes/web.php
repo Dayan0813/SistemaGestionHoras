@@ -13,6 +13,7 @@ use App\Http\Controllers\EmployeeCatalogsController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\MarkingLogController;
+use App\Http\Controllers\OperatingCalendarController;
 use App\Http\Controllers\ProgramationsController;
 use App\Http\Controllers\WorkConsolidationController;
 use App\Http\Controllers\WorkPositionController;
@@ -118,7 +119,24 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
     Route::get('/Servicios', function () {
         return Inertia::render('Servicios', ['currentRouteName' => 'servicios']);
     })->name('servicios');
+
+    // Calendario operativo: tipos de día (AA, A, B, C...), tipo de cada fecha y personal
+    // mínimo por área según el tipo.
+    Route::get('/calendario-operativo', [OperatingCalendarController::class, 'index'])->name('operatingCalendar.index');
+    Route::post('/calendario-operativo/tipos', [OperatingCalendarController::class, 'storeType'])->name('operatingCalendar.storeType');
+    Route::put('/calendario-operativo/tipos/{dayType}', [OperatingCalendarController::class, 'updateType'])->name('operatingCalendar.updateType');
+    Route::delete('/calendario-operativo/tipos/{dayType}', [OperatingCalendarController::class, 'destroyType'])->name('operatingCalendar.destroyType');
+    Route::put('/calendario-operativo/mes', [OperatingCalendarController::class, 'saveMonth'])->name('operatingCalendar.saveMonth');
+    Route::put('/calendario-operativo/personal', [OperatingCalendarController::class, 'saveStaffing'])->name('operatingCalendar.saveStaffing');
+    // Hora de salida de las áreas fijas los días de parque cerrado (lunes/martes fuera de temporada alta).
+    Route::put('/calendario-operativo/parque-cerrado', [OperatingCalendarController::class, 'saveClosedDayExitTimes'])->name('operatingCalendar.saveClosedDayExitTimes');
 });
+
+// Lectura del calendario operativo para las pantallas de programación (tipo de cada día).
+Route::middleware(['auth', 'permission:programaciones.ver'])->get(
+    '/calendario-operativo/dias',
+    [OperatingCalendarController::class, 'days']
+)->name('operatingCalendar.days');
 
 Route::middleware(['auth', 'permission:usuarios.gestionar'])->group(function () {
     // Registro de usuarios (Solo un admin puede hacerlo)
@@ -133,7 +151,6 @@ Route::middleware(['auth', 'permission:areas.gestionar'])->group(function () {
 
     Route::post('/areas', [AreaController::class, 'store'])->name('areas.store');
     Route::put('/areas/{area}', [AreaController::class, 'update'])->name('areas.update');
-    Route::put('/areas-config/high-season-ranges', [AreaController::class, 'updateHighSeasonRanges'])->name('areas.updateHighSeasonRanges');
     Route::put('/areas-config/vacation-reminder-months', [AreaController::class, 'updateVacationReminderMonths'])->name('areas.updateVacationReminderMonths');
 });
 
@@ -271,9 +288,9 @@ Route::middleware(['auth', 'permission:ausencias.ver'])->group(function () {
                 // fechas de cada una en la tabla, no solo el saldo restante.
                 'absences' => fn ($q) => $q->where('type', 'vacaciones')->where('status', 'Activa')->orderBy('start_date'),
             ])
-                ->orderBy('name')
-                ->get(['uid', 'name', 'contrato_id', 'dias_vacaciones_disponibles', 'area_id']),
-            'highSeasonRanges' => \App\Models\CompanySetting::get('high_season_ranges', []),
+                ->orderByName()
+                ->get(['uid', 'nombres', 'apellidos', 'contrato_id', 'dias_vacaciones_disponibles', 'area_id']),
+            'highSeasonRanges' => \App\Services\OperatingCalendar::highSeasonRanges(),
             'vacationReminderMonths' => \App\Models\CompanySetting::get('vacation_reminder_months', 3),
             'allAreas' => $isMultiAreaReadOnly ? area::orderBy('nombre')->get(['id', 'nombre']) : null,
             'selectedArea' => $isMultiAreaReadOnly ? $areaId : null,
@@ -286,6 +303,10 @@ Route::middleware(['auth', 'permission:ausencias.crear', 'throttle:300,1'])->gro
     Route::post('/ausencias/plan', [EmployeeAbsenceController::class, 'storePlan'])->name('ausencias.storePlan');
     Route::post('/ausencias/reservation', [EmployeeAbsenceController::class, 'storeReservation'])->name('ausencias.storeReservation');
     Route::put('/ausencias/{absence}/plan', [EmployeeAbsenceController::class, 'updatePlanRange'])->name('ausencias.updatePlanRange');
+    // Edición completa de una ausencia (fechas, reemplazo, notas): solo administrador.
+    Route::put('/ausencias/{absence}', [EmployeeAbsenceController::class, 'update'])
+        ->middleware('role:admin')
+        ->name('ausencias.update');
     Route::delete('/ausencias/{absence}', [EmployeeAbsenceController::class, 'destroy'])->name('ausencias.destroy');
 });
 
@@ -325,6 +346,8 @@ Route::middleware(['auth', 'permission:work_positions.gestionar'])->group(functi
 // descontrolado o un abuso real, no el guardado legítimo de una programación grande.
 Route::middleware(['auth', 'permission:programaciones.crear', 'throttle:300,1'])->group(function () {
     Route::post('/programations', [ProgramationsController::class, 'store'])->name('programationsStore');
+    // Revisa el borrador completo (horas mínimas de fijos / temporales) antes de subirlo.
+    Route::post('/programations/validate-draft', [ProgramationsController::class, 'validateDraft'])->name('programations.validateDraft');
 });
 
 Route::middleware(['auth','permission:programaciones.crear','throttle:20,1'])->group(function (){

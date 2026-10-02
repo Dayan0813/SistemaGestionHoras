@@ -54,9 +54,12 @@ class HandleInertiaRequests extends Middleware
                         'area_id' => $user->employee?->area_id,
                         'area_name' => $user->employee?->area?->nombre,
                         'area_scheduling_mode' => $user->employee?->area?->scheduling_mode,
-                        // Global para toda la empresa (no por área), como rangos de fechas
-                        // exactas (no meses completos) — ver CompanySetting.
-                        'area_high_season_ranges' => \App\Models\CompanySetting::get('high_season_ranges', []),
+                        // Global para toda la empresa (no por área): días cuyo tipo está marcado
+                        // como temporada alta en el calendario operativo, en rangos contiguos.
+                        'area_high_season_ranges' => \App\Services\OperatingCalendar::highSeasonRanges(),
+                        // Hora de salida de las áreas fijas los días de parque cerrado
+                        // (isoWeekday => 'HH:MM'), ver OperatingCalendar::isParkClosed().
+                        'park_closed_exit_times' => \App\Services\OperatingCalendar::closedDayExitTimes(),
                         // Meses de anticipación con que se avisa que una reserva de mes de
                         // vacaciones (sin fechas todavía) ya necesita fechas exactas — ver
                         // EmployeeAbsenceController::storeReservation().

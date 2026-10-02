@@ -13,6 +13,8 @@ import {
     toIsoDate,
 } from './programaciones.helpers';
 import type { Calendar, DraftBatch, Employee, EmployeeSchedule, WorkPosition } from './programaciones.types';
+import { AbsenceBadge } from './useAreaAbsences';
+import { DayTypeBadge, StaffingCount, StaffingRequirementBanner, type OperatingDayType } from './useOperatingDays';
 
 // Paso 02 en modo variable: un calendario mensual donde cada día se abre, en dos modales
 // seguidos, para asignar empleado + puesto. Todas las atracciones/puestos de un área
@@ -22,6 +24,8 @@ import type { Calendar, DraftBatch, Employee, EmployeeSchedule, WorkPosition } f
 export default function DayAssignmentCalendar({
     rangeDates,
     calendarMonths,
+    operatingDays,
+    isClosedDay,
     calendars,
     shiftLabel,
     shiftBadgeLetter,
@@ -43,6 +47,10 @@ export default function DayAssignmentCalendar({
 }: {
     rangeDates: Date[];
     calendarMonths: string[];
+    // Tipo de día (AA, A, B, C...) del calendario operativo por fecha ISO.
+    operatingDays: Record<string, OperatingDayType>;
+    // true los días de parque cerrado (lunes/martes fuera de temporada alta): el área descansa.
+    isClosedDay: (dayISO: string) => boolean;
     calendars: Calendar[];
     shiftLabel: (calendar: Calendar) => string;
     shiftBadgeLetter: (calendar: Calendar) => string;
@@ -153,18 +161,20 @@ export default function DayAssignmentCalendar({
 
     return (
         <div>
-            <div className="flex flex-wrap gap-6">
+            {/* Un mes por bloque, a todo el ancho: celdas grandes con el día, el tipo de día del
+                calendario operativo y cuántas personas van programadas (contra las requeridas). */}
+            <div className="space-y-6">
                 {calendarMonths.map((month) => (
-                    <div key={month} className="min-w-[480px] flex-1 rounded-xl border border-gray-200 bg-white p-5">
+                    <div key={month} className="rounded-xl border border-gray-200 bg-white p-5">
                         <h3 className="mb-4 text-sm font-semibold text-gray-900 capitalize">
                             {toDate(`${month}-01`).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}
                         </h3>
-                        <div className="mb-2 grid grid-cols-7 gap-1.5 text-center text-[10px] font-bold text-gray-400">
-                            {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, index) => (
-                                <span key={`${day}-${index}`}>{day}</span>
+                        <div className="mb-2 grid grid-cols-7 gap-1.5 text-center text-[11px] font-bold tracking-wide text-gray-400 uppercase">
+                            {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((day) => (
+                                <span key={day}>{day}</span>
                             ))}
                         </div>
-                        <div className="grid grid-cols-7 gap-1.5 text-center">
+                        <div className="grid grid-cols-7 gap-1.5">
                             {monthCalendar(month).map((date, index) => {
                                 if (!date) return <span key={`empty-${index}`} />;
                                 const iso = toIsoDate(date);
@@ -172,26 +182,47 @@ export default function DayAssignmentCalendar({
                                 const summary = daySummary(iso);
                                 const summaryCalendar = summary.calendarId ? calendars.find((c) => c.id === summary.calendarId) : null;
                                 const isOpen = openDayISO === iso;
+                                const dayType = inRange ? operatingDays[iso] : undefined;
+                                // Parque cerrado: el área no trabaja. Solo se puede abrir si ya hay
+                                // alguien puesto ese día, para quitarlo.
+                                const closed = inRange && isClosedDay(iso);
                                 return (
                                     <button
                                         key={iso}
-                                        disabled={!inRange}
+                                        disabled={!inRange || (closed && summary.count === 0)}
                                         onClick={() => openDay(iso)}
-                                        title={iso}
-                                        className={`flex h-9 flex-col items-center justify-center gap-0.5 rounded-md text-xs font-medium transition-colors ${
-                                            !inRange ? 'text-gray-300' : isOpen ? 'bg-[#a81c24] text-white' : 'text-gray-700 hover:bg-gray-50'
+                                        title={closed ? `${iso} · Parque cerrado: el área descansa` : iso}
+                                        className={`flex h-16 flex-col justify-between rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                                            !inRange
+                                                ? 'cursor-default border-transparent text-gray-300'
+                                                : isOpen
+                                                  ? 'border-[#a81c24] bg-[#a81c24] text-white'
+                                                  : closed
+                                                    ? 'border-dashed border-gray-300 bg-gray-100 text-gray-400'
+                                                    : 'border-gray-200 text-gray-800 hover:border-[#a81c24]/40 hover:bg-[#fdf0f0]/40'
                                         }`}
                                     >
-                                        <span>{date.getDate()}</span>
-                                        {summary.count > 0 && (
-                                            <span
-                                                className={`flex items-center gap-0.5 text-[9px] font-bold ${isOpen ? 'text-white' : 'text-gray-500'}`}
-                                            >
-                                                <i
-                                                    className={`inline-block h-1.5 w-1.5 rounded-full ${isOpen ? 'bg-white' : summaryCalendar ? shiftColor(summaryCalendar.shift_type).dot : 'bg-gray-400'}`}
-                                                />
-                                                {summary.count}
+                                        <div className="flex items-start justify-between gap-1">
+                                            <span className="text-sm leading-none font-semibold">{date.getDate()}</span>
+                                            <DayTypeBadge type={dayType} />
+                                        </div>
+                                        {closed ? (
+                                            <span className={`text-[10px] font-bold uppercase ${summary.count > 0 ? 'text-[#a81c24]' : 'text-gray-500'}`}>
+                                                Cerrado{summary.count > 0 && ` · ${summary.count} programado${summary.count === 1 ? '' : 's'}`}
                                             </span>
+                                        ) : dayType?.min_staff ? (
+                                            <StaffingCount type={dayType} scheduled={summary.count} size="xs" />
+                                        ) : (
+                                            summary.count > 0 && (
+                                                <span className={`flex items-center gap-1 text-[11px] font-bold ${isOpen ? 'text-white' : 'text-gray-500'}`}>
+                                                    <i
+                                                        className={`inline-block h-2 w-2 rounded-full ${
+                                                            isOpen ? 'bg-white' : summaryCalendar ? shiftColor(summaryCalendar.shift_type).dot : 'bg-gray-400'
+                                                        }`}
+                                                    />
+                                                    {summary.count} {summary.count === 1 ? 'persona' : 'personas'}
+                                                </span>
+                                            )
                                         )}
                                     </button>
                                 );
@@ -225,6 +256,9 @@ export default function DayAssignmentCalendar({
                             </button>
                         </div>
                         <h2 className="text-xl font-semibold text-gray-900">Elige el turno del día</h2>
+                        <div className="mt-4">
+                            <StaffingRequirementBanner type={operatingDays[openDayISO]} scheduled={daySummary(openDayISO).count} />
+                        </div>
 
                         {calendars.length === 0 ? (
                             <p className="mt-7 text-sm text-gray-500">
@@ -310,6 +344,21 @@ export default function DayAssignmentCalendar({
                         <p className="mb-2 text-xs font-bold tracking-widest text-gray-400 capitalize uppercase">
                             {toDate(openDayISO).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
                         </p>
+                        <StaffingRequirementBanner type={operatingDays[openDayISO]} scheduled={daySummary(openDayISO).count} />
+                        {/* Quién está de vacaciones o incapacitado ese día (no se le puede asignar puesto). */}
+                        {(() => {
+                            const absent = employeesList.filter((e) => absenceForDay(e.uid, openDayISO));
+                            return absent.length > 0 ? (
+                                <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                                    <span className="text-xs font-semibold text-gray-500">Ausentes este día:</span>
+                                    {absent.map((e) => (
+                                        <span key={e.uid} className="flex items-center gap-1 text-xs font-medium text-gray-700">
+                                            {e.name} <AbsenceBadge type={absenceForDay(e.uid, openDayISO)!} />
+                                        </span>
+                                    ))}
+                                </div>
+                            ) : null;
+                        })()}
                         <div className="mb-7 flex items-center gap-2.5">
                             <h2 className="text-xl font-semibold text-gray-900">Empleados y puestos</h2>
                             {dayCalendar && (

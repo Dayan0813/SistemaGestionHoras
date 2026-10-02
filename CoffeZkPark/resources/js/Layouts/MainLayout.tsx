@@ -111,6 +111,34 @@ export default function MainLayout({ children, RouteNavbar }: MainLayoutProps) {
                         </button>
                     </Link>
                 )}
+                {/* Ausencias y Plan de vacaciones: el administrador también llega desde Servicios,
+                    pero coordinadores y TH (que no ven Servicios) solo tienen este camino. */}
+                {canAbsences && (
+                    <Link href={route('ausencias')} className="flex-1">
+                        <button
+                            className={`w-full rounded-lg px-1 py-1 ${
+                                RouteNavbar === 'ausencias'
+                                    ? 'bg-white font-bold text-[#95c020] shadow-md'
+                                    : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
+                            }`}
+                        >
+                            Ausencias
+                        </button>
+                    </Link>
+                )}
+                {canAbsences && (
+                    <Link href={route('plan-vacaciones')} className="flex-1">
+                        <button
+                            className={`w-full rounded-lg px-1 py-1 ${
+                                RouteNavbar === 'plan-vacaciones'
+                                    ? 'bg-white font-bold text-[#95c020] shadow-md'
+                                    : 'bg-[#95c020] hover:bg-white hover:text-[#95c020]'
+                            }`}
+                        >
+                            Plan de vacaciones
+                        </button>
+                    </Link>
+                )}
                 {canMarkings && (
 
                     <Link href={route('markinglogs')} className="flex-1">

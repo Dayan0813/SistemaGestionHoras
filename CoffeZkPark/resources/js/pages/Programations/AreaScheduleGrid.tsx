@@ -4,7 +4,9 @@ import axios from 'axios';
 import dayjs from 'dayjs';
 import { AlertTriangle, ChevronLeft, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { applyFixedAreaCutoff } from './programaciones.helpers';
+import { applyFixedAreaCutoff, DEFAULT_CLOSED_DAY_EXIT_TIMES, isParkClosed, weeksOfMonth, type ClosedDayExitTimes } from './programaciones.helpers';
+import { AbsenceBadge, useAreaAbsences } from './useAreaAbsences';
+import { DayTypeBadge, useOperatingDays } from './useOperatingDays';
 
 /* =========================
    TIPOS
@@ -98,8 +100,10 @@ const contractBadgeColor = (name?: string | null) =>
 export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
     // Un coordinador no necesita exportar a Excel su propia área (ya la ve completa en
     // pantalla) — el botón queda solo para los roles que consultan varias áreas.
-    const { auth } = usePage().props as { auth?: { user?: { roles?: string[] } | null } };
+    const { auth } = usePage().props as { auth?: { user?: { roles?: string[]; park_closed_exit_times?: ClosedDayExitTimes } | null } };
     const isCoordinator = auth?.user?.roles?.includes('coordinator') ?? false;
+    // Hora de salida de las áreas fijas los días de parque cerrado (la define el administrador).
+    const closedDayExitTimes = auth?.user?.park_closed_exit_times ?? DEFAULT_CLOSED_DAY_EXIT_TIMES;
 
     const [year, setYear] = useState(dayjs().year());
     const [month, setMonth] = useState(dayjs().month() + 1);
@@ -107,6 +111,10 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
     // fijo — se resetea a la semana que contiene hoy (o la primera del mes) al cambiar de
     // área/mes/año, igual que ya hace el scroll horizontal más abajo.
     const [weekIndex, setWeekIndex] = useState(0);
+    // Periodo del botón "Exportar a Excel": '' = mes completo, o el lunes ('YYYY-MM-DD') de la semana.
+    const [exportWeekStart, setExportWeekStart] = useState('');
+    const exportWeeks = useMemo(() => weeksOfMonth(year, month), [year, month]);
+    useEffect(() => setExportWeekStart(''), [year, month]);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -138,6 +146,11 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
         const daysInMonth = dayjs(new Date(year, month - 1, 1)).daysInMonth();
         return Array.from({ length: daysInMonth }, (_, i) => dayjs(new Date(year, month - 1, i + 1)));
     }, [year, month]);
+    // Tipo de día (AA, A, B, C...) del calendario operativo, para mostrarlo en los encabezados.
+    const operatingDays = useOperatingDays(days[0].format('YYYY-MM-DD'), days[days.length - 1].format('YYYY-MM-DD'));
+    // Vacaciones e incapacidades: esos días el turno se quita, así que se muestra la ausencia
+    // en vez de dejar la celda en blanco.
+    const { absenceFor, absencesOn } = useAreaAbsences(areaId);
 
     /* =========================
        HELPERS
@@ -261,21 +274,18 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
         return minutes / 60;
     };
 
-    // Política de la empresa SOLO para áreas de jornada fija (lunes hasta medio día, martes
-    // hasta las 4pm) — mismo criterio que Programaciones.tsx y AreaScheduleExport.php,
-    // implementación compartida en applyFixedAreaCutoff() (programaciones.helpers.ts) para no
-    // tener dos copias TS del mismo cálculo a mano.
+    // Política SOLO para áreas de jornada fija: los días de parque cerrado (lunes y martes fuera
+    // de temporada alta) se sale a la hora configurada por el administrador — mismo criterio que
+    // ShiftHours::forDay() en el backend (applyFixedAreaCutoff/isParkClosed en programaciones.helpers.ts).
     const hoursForEmployeeDay = (employee: Employee, dayISO: string): number => {
         const programation = getProgramationForDay(employee, dayISO);
         if (!programation) return 0;
         const calendar = getCalendarForDay(programation, dayISO);
         const hours = shiftHours(calendar);
         if (positions.length > 0) return hours;
+        if (!isParkClosed(dayISO, highSeasonRanges, closedDayExitTimes)) return hours;
 
-        // En temporada alta esta política de horario corto no aplica — se trabaja normal.
-        if (highSeasonRanges.some((range) => dayISO >= range.start && dayISO <= range.end)) return hours;
-
-        return applyFixedAreaCutoff(hours, calendar.hora_entrada, dayISO);
+        return applyFixedAreaCutoff(hours, calendar.hora_entrada, dayISO, closedDayExitTimes);
     };
 
     // Semanas del mes (lunes a domingo), con null en los huecos antes del día 1 o después del
@@ -310,17 +320,18 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
     // Por empleado, qué semanas del mes visible superan el tope legal — para mostrar un
     // indicador de alerta junto a su nombre en la grilla (en vez de una tabla de horas aparte,
     // que antes se mostraba siempre visible sin importar si había o no un problema).
-    // `firstDayISO` es el primer día real (dentro del mes) de esa semana — el ícono solo se
-    // muestra ahí, no en los demás días donde el empleado también aparece esa semana, para no
-    // repetir la misma advertencia varias veces seguidas.
+    // `firstDayISO` es el primer día de esa semana en que el empleado tiene turno — el ícono solo
+    // se muestra ahí (la celda que lo pinta), no en los demás días de la semana, para no repetir
+    // la misma advertencia varias veces seguidas.
     const weeklyOverages = useMemo(() => {
         const overagesByEmployee = new Map<string, { weekIndex: number; hours: number; firstDayISO: string }[]>();
         monthWeeks.forEach((week, weekIndex) => {
-            const firstDayISO = week.find((day) => day)?.format('YYYY-MM-DD');
-            if (!firstDayISO) return;
             employees.forEach((employee) => {
                 const weekTotal = week.reduce((sum, day) => sum + (day ? hoursForEmployeeDay(employee, day.format('YYYY-MM-DD')) : 0), 0);
-                if (weekTotal > MAX_WEEKLY_HOURS) {
+                const firstDayISO = week
+                    .find((day) => day && getProgramationForDay(employee, day.format('YYYY-MM-DD')))
+                    ?.format('YYYY-MM-DD');
+                if (firstDayISO && weekTotal > MAX_WEEKLY_HOURS) {
                     const list = overagesByEmployee.get(employee.uid) ?? [];
                     list.push({ weekIndex, hours: weekTotal, firstDayISO });
                     overagesByEmployee.set(employee.uid, list);
@@ -403,12 +414,32 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
 
                 <div className="ml-auto flex items-center gap-2 self-end">
                     {!isCoordinator && (
-                        <a
-                            href={route('programations.exportMonth', { area: areaId, year, month })}
-                            className="flex items-center gap-1.5 rounded-md border border-[#95c020] px-3 py-2 text-sm font-semibold text-[#95c020] hover:bg-[#95c020] hover:text-white"
-                        >
-                            <FileSpreadsheet className="h-4 w-4" /> Exportar a Excel
-                        </a>
+                        <>
+                            <select
+                                value={exportWeekStart}
+                                onChange={(e) => setExportWeekStart(e.target.value)}
+                                title="Periodo a exportar"
+                                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
+                            >
+                                <option value="">Mes completo</option>
+                                {exportWeeks.map((week) => (
+                                    <option key={week.start} value={week.start}>
+                                        {week.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <a
+                                href={route('programations.exportMonth', {
+                                    area: areaId,
+                                    year,
+                                    month,
+                                    ...(exportWeekStart ? { week_start: exportWeekStart } : {}),
+                                })}
+                                className="flex items-center gap-1.5 rounded-md border border-[#95c020] px-3 py-2 text-sm font-semibold text-[#95c020] hover:bg-[#95c020] hover:text-white"
+                            >
+                                <FileSpreadsheet className="h-4 w-4" /> Exportar a Excel
+                            </a>
+                        </>
                     )}
                     {rightSlot}
                 </div>
@@ -438,6 +469,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                             <div className="mt-0.5 text-[11px] leading-tight font-semibold text-gray-400">
                                                 {weekdayLabels[isoWeekday(dayISO)]}
                                             </div>
+                                            <DayTypeBadge type={operatingDays[dayISO]} className="mt-1" />
                                         </th>
                                     );
                                 })}
@@ -520,6 +552,29 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                 </tr>
                             ))}
 
+                            {/* Quién está de vacaciones o incapacitado cada día: en modo variable el
+                                ausente no ocupa ningún puesto, así que no aparecería en la grilla. */}
+                            {days.some((day) => absencesOn(day.format('YYYY-MM-DD')).length > 0) && (
+                                <tr className="bg-gray-50/60">
+                                    <td className="sticky left-0 z-10 border-r border-b border-gray-100 bg-gray-50 px-5 py-4">
+                                        <div className="text-sm font-semibold text-gray-700">Ausencias</div>
+                                        <div className="text-[11px] text-gray-400">Vacaciones e incapacidades</div>
+                                    </td>
+                                    {days.map((day) => {
+                                        const dayISO = day.format('YYYY-MM-DD');
+                                        return (
+                                            <td key={dayISO} className="space-y-1.5 border-b border-gray-100 px-3 py-3 align-top">
+                                                {absencesOn(dayISO).map((a) => (
+                                                    <div key={a.employee_uid} className="flex items-center gap-1.5">
+                                                        <span className="min-w-0 truncate text-xs font-semibold text-gray-700">{a.employee_name ?? a.employee_uid}</span>
+                                                        <AbsenceBadge type={a.type} short />
+                                                    </div>
+                                                ))}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -591,6 +646,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                 <span className="mt-0.5 block font-mono text-[9px] font-normal text-gray-400 normal-case">
                                                     {day.format('D MMM')}
                                                 </span>
+                                                <DayTypeBadge type={operatingDays[day.format('YYYY-MM-DD')]} className="mt-1 normal-case" />
                                             </th>
                                         );
                                     })}
@@ -626,7 +682,7 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                     {programation && (
                                                         <span
                                                             className={`inline-flex items-center gap-1 font-bold ${
-                                                                draft? 'text-gray-400 underline decoration-dashed' : replacement ? 'text-sky-600 ' : 'text[#a81c24]'
+                                                                draft? 'text-gray-400 underline decoration-dashed' : replacement ? 'text-sky-600 ' : 'text-[#a81c24]'
                                                                 }`}
                                                             title={draft ? 'Turno en borrador , todavia sin confirmar' : replacement ? 'Cubre a un empleado ausente (vacaciones/incapacidad)' : undefined }
                                                         >
@@ -637,6 +693,9 @@ export default function AreaScheduleGrid({ areaId, rightSlot }: Props) {
                                                               </span>
                                                             )}
                                                         </span>
+                                                    )}
+                                                    {!programation && absenceFor(employee.uid, dayISO) && (
+                                                        <AbsenceBadge type={absenceFor(employee.uid, dayISO)!} short />
                                                     )}
                                                 </td>
                                             );
