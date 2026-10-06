@@ -232,7 +232,7 @@ export default function OperatingCalendar({ dayTypes, areas, staffing, closedDay
                 </div>
 
                 {dayTypes.length === 0 && !typeForm && (
-                    <p className="text-sm text-gray-500">Todavía no hay tipos de día. Crea el primero (por ejemplo "AA" para los días de menos público).</p>
+                    <p className="text-sm text-gray-500">Todavía no hay tipos de día. Crea el primero (por ejemplo "A" para los días de menos público).</p>
                 )}
 
                 <div className="flex flex-wrap gap-2">
@@ -486,8 +486,7 @@ export default function OperatingCalendar({ dayTypes, areas, staffing, closedDay
                     <Users size={18} className="text-[#a81c24]" /> Personal mínimo por área
                 </h2>
                 <p className="mt-1 mb-4 text-xs text-gray-500">
-                    Cuántas personas deben estar programadas como mínimo en cada área variable según el tipo de día. Vacío = sin mínimo.
-                    Las áreas de turno fijo no tienen personal mínimo.
+                    Cuántas personas deben estar programadas como mínimo en cada área según el tipo de día. Vacío = sin mínimo.
                 </p>
 
                 {dayTypes.length === 0 ? (

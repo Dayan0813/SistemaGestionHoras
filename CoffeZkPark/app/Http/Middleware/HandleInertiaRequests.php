@@ -54,6 +54,15 @@ class HandleInertiaRequests extends Middleware
                         'area_id' => $user->employee?->area_id,
                         'area_name' => $user->employee?->area?->nombre,
                         'area_scheduling_mode' => $user->employee?->area?->scheduling_mode,
+                        // Áreas asignadas al coordinador (vacío para otros roles).
+                        'coordinator_areas' => $user->hasRole('coordinator')
+                            ? $user->coordinatorAreas()->with('area:id,nombre,scheduling_mode')->get()
+                                ->map(fn ($ca) => [
+                                    'id'              => $ca->area_id,
+                                    'nombre'          => $ca->area?->nombre,
+                                    'scheduling_mode' => $ca->area?->scheduling_mode,
+                                ])->values()->all()
+                            : [],
                         // Global para toda la empresa (no por área): días cuyo tipo está marcado
                         // como temporada alta en el calendario operativo, en rangos contiguos.
                         'area_high_season_ranges' => \App\Services\OperatingCalendar::highSeasonRanges(),

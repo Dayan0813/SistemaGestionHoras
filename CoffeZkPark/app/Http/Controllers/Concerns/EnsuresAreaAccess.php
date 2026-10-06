@@ -4,37 +4,43 @@ namespace App\Http\Controllers\Concerns;
 
 trait EnsuresAreaAccess
 {
-    /**
-     * ==========================================================
-     *
-     *  HELPER PARA VALIDACIONES
-     *
-     * ===========================================================
-     */
     public function ensureAreaAcces(int $areaId): void
     {
         $user = auth()->user();
 
-        // Admin puede ver todo
         if ($user->hasRole('admin')) {
             return;
         }
 
-        // Usuario sin empleado asociado -> error
         if (!$user->employee) {
             abort(403, 'Usuario sin empleado asociado');
         }
 
-        // Resto de roles: SOLO su área
-        if ((int) $user->employee->area_id !== (int) $areaId) {
+        // Coordinador: puede tener varias áreas en coordinator_areas; si no tiene
+        // ninguna registrada allí, cae al área única del employee como fallback.
+        if ($user->hasRole('coordinator')) {
+            $assigned = $user->coordinatorAreaIds();
+            if (!empty($assigned)) {
+                if (!in_array($areaId, $assigned, true)) {
+                    abort(403);
+                }
+                return;
+            }
+            // Fallback: área única del employee
+            if ((int) $user->employee->area_id !== $areaId) {
+                abort(403);
+            }
+            return;
+        }
+
+        // Resto de roles: solo su área
+        if ((int) $user->employee->area_id !== $areaId) {
             abort(403);
         }
     }
 
     /**
-     * Acceso de SOLO LECTURA a un área: aux_admin_th y aux_th pueden consultar CUALQUIER área
-     * (programación, ausencias que se muestran en ella); el resto de roles conserva la
-     * restricción a su propia área de ensureAreaAcces().
+     * Acceso de SOLO LECTURA: aux_admin_th y aux_th pueden consultar cualquier área.
      */
     public function ensureAreaViewAccess(int $areaId): void
     {

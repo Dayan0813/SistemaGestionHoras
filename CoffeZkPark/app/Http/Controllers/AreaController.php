@@ -61,7 +61,18 @@ class AreaController extends Controller
 
         return Inertia::render('Areas', [
             'areas' => $areas,
-            'eligibleEmployees' => Employee::whereDoesntHave('user')->orderByName()->get(['uid', 'nombres', 'apellidos']),
+            // Candidatos a coordinador: cualquier empleado activo. Si ya tiene usuario, al crear el
+            // área se reutiliza esa cuenta (no se piden correo ni contraseña).
+            'eligibleEmployees' => Employee::where('estado', 'Activo')
+                ->with(['user:id,employee_uid,email', 'area:id,nombre'])
+                ->orderByName()
+                ->get(['uid', 'nombres', 'apellidos', 'area_id'])
+                ->map(fn ($e) => [
+                    'uid' => $e->uid,
+                    'name' => $e->name,
+                    'user_email' => $e->user?->email,
+                    'area_name' => $e->area?->nombre,
+                ]),
             'currentRouteName' => 'areas',
             // Solo lectura: la temporada alta se define en el calendario operativo.
             'highSeasonRanges' => \App\Services\OperatingCalendar::highSeasonRanges(),
@@ -105,12 +116,20 @@ class AreaController extends Controller
             'centro_costo' => 'required|string|max:255|unique:areas,centro_costo',
             'descripcion' => 'nullable|string|max:1000',
             'scheduling_mode' => 'required|in:fijo,variable',
-            'coordinator_employee_uid' => 'required|exists:employees,uid|unique:users,employee_uid',
-            'coordinator_email' => 'required|email|unique:users,email',
-            'coordinator_password' => ['required', Password::min(8)->mixedCase()->numbers()],
+            'coordinator_employee_uid' => 'required|exists:employees,uid',
         ]);
 
-        DB::transaction(function () use ($validated) {
+        // Si el coordinador ya tiene usuario, se reutiliza esa cuenta; si no, se crea con el
+        // correo y la contraseña del formulario.
+        $existingUser = User::where('employee_uid', $validated['coordinator_employee_uid'])->first();
+        if (!$existingUser) {
+            $validated += $request->validate([
+                'coordinator_email' => 'required|email|unique:users,email',
+                'coordinator_password' => ['required', Password::min(8)->mixedCase()->numbers()],
+            ]);
+        }
+
+        DB::transaction(function () use ($validated, $existingUser) {
             $area = Area::create([
                 'nombre' => $validated['nombre'],
                 'centro_costo' => $validated['centro_costo'],
@@ -118,23 +137,27 @@ class AreaController extends Controller
                 'scheduling_mode' => $validated['scheduling_mode'],
             ]);
 
-            $user = User::create([
+            $user = $existingUser ?? User::create([
                 'email' => $validated['coordinator_email'],
                 'password' => Hash::make($validated['coordinator_password']),
                 'employee_uid' => $validated['coordinator_employee_uid'],
             ]);
 
-            UserRole::create([
+            UserRole::firstOrCreate([
                 'user_id' => $user->id,
                 'role' => 'coordinator',
             ]);
 
+            // El coordinador queda en el área nueva (un coordinador maneja el área a la que pertenece).
             Employee::where('uid', $validated['coordinator_employee_uid'])->update(['area_id' => $area->id]);
+            \App\Models\CoordinatorArea::firstOrCreate(['user_id' => $user->id, 'area_id' => $area->id]);
         });
 
         return redirect()
             ->route('areas')
-            ->with('success', '✅ Área creada correctamente, con su coordinador asignado');
+            ->with('success', $existingUser
+                ? "✅ Área creada correctamente. El coordinador usa su cuenta existente ({$existingUser->email})."
+                : '✅ Área creada correctamente, con su coordinador asignado');
     }
 
     /**
@@ -238,10 +261,15 @@ class AreaController extends Controller
             ];
         });
 
+        // Prioridad: coordinator_areas (sistema nuevo) → employee.area_id (fallback antiguo)
         $coordinator = User::whereHas('roles', fn($q) => $q->where('role', 'coordinator'))
-            ->whereHas('employee', fn($q) => $q->where('area_id', $area->id))
+            ->whereHas('coordinatorAreas', fn($q) => $q->where('area_id', $area->id))
             ->with('employee')
-            ->first();
+            ->first()
+            ?? User::whereHas('roles', fn($q) => $q->where('role', 'coordinator'))
+                ->whereHas('employee', fn($q) => $q->where('area_id', $area->id))
+                ->with('employee')
+                ->first();
 
         return Inertia::render('Areas/Show', [
             'currentRouteName' => 'areas',

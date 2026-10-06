@@ -27,8 +27,7 @@ class OperatingCalendarController extends Controller
         return Inertia::render('OperatingCalendar', [
             'currentRouteName' => 'servicios',
             'dayTypes' => DayType::orderBy('sort_order')->orderBy('name')->get(['id', 'name', 'color', 'sort_order', 'is_high_season']),
-            // El personal mínimo por tipo de día solo aplica a áreas variables (Operaciones).
-            'areas' => area::where('scheduling_mode', 'variable')->orderBy('nombre')->get(['id', 'nombre']),
+            'areas' => area::orderBy('nombre')->get(['id', 'nombre']),
             'staffing' => DayTypeStaffing::get(['area_id', 'day_type_id', 'min_staff']),
             'closedDayExitTimes' => OperatingCalendar::closedDayExitTimes(),
         ]);
@@ -146,7 +145,7 @@ class OperatingCalendarController extends Controller
     {
         $validated = $request->validate([
             'staffing' => 'present|array',
-            'staffing.*.area_id' => ['required', 'integer', Rule::exists('areas', 'id')->where('scheduling_mode', 'variable')],
+            'staffing.*.area_id' => ['required', 'integer', Rule::exists('areas', 'id')],
             'staffing.*.day_type_id' => ['required', 'integer', Rule::exists('day_types', 'id')],
             'staffing.*.min_staff' => 'nullable|integer|min:0|max:999',
         ]);

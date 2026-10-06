@@ -117,11 +117,11 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
     // cae dentro del rango elegido.
     const [filterFrom, setFilterFrom] = useState('');
     const [filterTo, setFilterTo] = useState('');
+    const [filterAreaId, setFilterAreaId] = useState<number | ''>('');
 
     const filteredAbsences = useMemo(() => {
-        if (!filterFrom && !filterTo) return absences as AbsenceRow[];
-
         return (absences as AbsenceRow[]).filter((a) => {
+            if (filterAreaId !== '' && a.area?.id !== filterAreaId) return false;
             if (a.start_date && a.end_date) {
                 if (filterFrom && a.end_date.slice(0, 10) < filterFrom) return false;
                 if (filterTo && a.start_date.slice(0, 10) > filterTo) return false;
@@ -136,7 +136,7 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
             }
             return true;
         });
-    }, [absences, filterFrom, filterTo]);
+    }, [absences, filterFrom, filterTo, filterAreaId]);
 
     // Rangos de fechas que el empleado ausente elegido tiene programados actualmente — para
     // mostrar de un vistazo qué días sí tiene cobertura y avisar (sin bloquear) si la fecha
@@ -328,6 +328,23 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
             )}
 
             <div className="container mx-auto mt-6 flex flex-wrap items-end gap-3">
+                {isAdmin && areas && (
+                    <label className="block text-xs font-semibold text-gray-500">
+                        Área
+                        <select
+                            value={filterAreaId}
+                            onChange={(e) => setFilterAreaId(e.target.value ? Number(e.target.value) : '')}
+                            className="mt-1 block w-52 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
+                        >
+                            <option value="">Todas las áreas</option>
+                            {(areas as AreaOption[]).map((a) => (
+                                <option key={a.id} value={a.id}>
+                                    {a.nombre}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                )}
                 <label className="block text-xs font-semibold text-gray-500">
                     Desde
                     <input
@@ -348,11 +365,12 @@ const Ausencias = ({ currentRouteName }: CurrentProps) => {
                         className="mt-1 block rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
                     />
                 </label>
-                {(filterFrom || filterTo) && (
+                {(filterFrom || filterTo || filterAreaId !== '') && (
                     <button
                         onClick={() => {
                             setFilterFrom('');
                             setFilterTo('');
+                            setFilterAreaId('');
                         }}
                         className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                     >

@@ -56,13 +56,37 @@ type TemplateShift = (typeof TEMPLATE_SHIFTS)[number]['key'];
 
 export default function Programaciones() {
     const { auth, allAreas } = usePage().props as any;
-    const areaId: number | null = auth?.user?.area_id ?? null;
-    const areaName: string = auth?.user?.area_name ?? 'Sin área asignada';
-    const schedulingMode: 'fijo' | 'variable' = auth?.user?.area_scheduling_mode === 'variable' ? 'variable' : 'fijo';
+    const isAdmin: boolean = auth?.user?.roles?.includes('admin') ?? false;
+    const isCoordinator: boolean = auth?.user?.roles?.includes('coordinator') ?? false;
+
+    // Áreas asignadas al coordinador desde coordinator_areas (puede ser más de una).
+    const coordinatorAreas: { id: number; nombre: string; scheduling_mode: string }[] =
+        auth?.user?.coordinator_areas ?? [];
+    const isMultiAreaCoordinator = isCoordinator && coordinatorAreas.length > 1;
+
+    // Área activa: para coordinadores con varias áreas se elige con un selector;
+    // para el resto sigue siendo el área única del employee.
+    const [selectedCoordinatorAreaId, setSelectedCoordinatorAreaId] = useState<number | null>(
+        coordinatorAreas.length > 0 ? coordinatorAreas[0].id : null,
+    );
+
+    const activeCoordinatorArea = isMultiAreaCoordinator
+        ? coordinatorAreas.find((a) => a.id === selectedCoordinatorAreaId) ?? coordinatorAreas[0]
+        : null;
+
+    const areaId: number | null = isMultiAreaCoordinator
+        ? (activeCoordinatorArea?.id ?? null)
+        : (auth?.user?.area_id ?? null);
+    const areaName: string = isMultiAreaCoordinator
+        ? (activeCoordinatorArea?.nombre ?? 'Sin área asignada')
+        : (auth?.user?.area_name ?? 'Sin área asignada');
+    const schedulingMode: 'fijo' | 'variable' = isMultiAreaCoordinator
+        ? (activeCoordinatorArea?.scheduling_mode === 'variable' ? 'variable' : 'fijo')
+        : (auth?.user?.area_scheduling_mode === 'variable' ? 'variable' : 'fijo');
+
     // aux_th tiene "programaciones.ver" pero no "programaciones.crear": ve
-    // únicamente la consulta de solo lectura por área, nunca el asistente de
-    // creación (que de todos modos no podría enviar).
-    const canCreate: boolean = auth?.user?.permissions?.includes('programaciones.crear') ?? false;
+    // únicamente la consulta de solo lectura por área, nunca el asistente de creación.
+    const canCreate: boolean = !isAdmin && (auth?.user?.permissions?.includes('programaciones.crear') ?? false);
     // Coordinador / aux_admin_th: crear, editar, activar-desactivar y eliminar puestos de su área.
     const canManagePositions: boolean = auth?.user?.permissions?.includes('work_positions.gestionar') ?? false;
 
@@ -993,7 +1017,7 @@ export default function Programaciones() {
                                 Contrato
                             </th>
                             <th className="border-b border-gray-100 bg-gray-50 px-2 py-3 text-center text-[10px] font-bold text-gray-500 uppercase">
-                                Todos los días
+                                Todos los días 
                             </th>
                             {visibleDates
                                 .filter((date) => selectedWeekdays.includes(isoWeekday(date)))
@@ -1252,8 +1276,20 @@ export default function Programaciones() {
                 </div>
                 <div className="w-full max-w-xs rounded-xl border border-[#a81c24] bg-white p-4 sm:w-72">
                     <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">Área asignada</p>
-                    <strong className="block text-sm text-gray-900">{areaName}</strong>
-                    {/* El período se elige por semanas (lunes a domingo): las flechas avanzan de a una. */}
+                    {isMultiAreaCoordinator ? (
+                        <select
+                            value={selectedCoordinatorAreaId ?? ''}
+                            onChange={(e) => setSelectedCoordinatorAreaId(Number(e.target.value))}
+                            className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm font-semibold text-gray-900 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
+                        >
+                            {coordinatorAreas.map((a) => (
+                                <option key={a.id} value={a.id}>{a.nombre}</option>
+                            ))}
+                        </select>
+                    ) : (
+                        <strong className="block text-sm text-gray-900">{areaName}</strong>
+                    )}
+                    {/* El período se elige (lunes a domingo): las flechas avanzan de a una. */}
                     <div className="mt-3">
                         <span className="text-xs font-semibold text-gray-500">Semana</span>
                         <div className="mt-1 flex items-center gap-1 rounded-md border border-gray-300 px-1 py-1">

@@ -295,9 +295,16 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
     // aux_admin_th y aux_th no tienen área propia: el backend solo devuelve empleados de la
     // área elegida en "?area=" (nunca todas mezcladas) — mismo patrón que Ausencias.tsx y
     // Programaciones.tsx.
-    const isMultiAreaReadOnly = !!allAreas;
-
+    const isAdmin = auth?.user?.roles?.includes('admin') ?? false;
+    const isMultiAreaReadOnly = !isAdmin && !!allAreas;
     const isJanuary = new Date().getMonth() === 0;
+
+    const [filterAreaId, setFilterAreaId] = useState<number | ''>('');
+
+    const displayedEmployees = useMemo(() => {
+        if (!isAdmin || filterAreaId === '') return employees as EmployeeRow[];
+        return (employees as EmployeeRow[]).filter((e) => e.area_id === filterAreaId);
+    }, [isAdmin, filterAreaId, employees]);
 
     const [planEmployee, setPlanEmployee] = useState<EmployeeRow | null>(null);
     // Paso 1 obligatorio al abrir el modal: elegir el mes de las vacaciones. Mientras no haya
@@ -504,6 +511,26 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                 </p>
             </div>
 
+            {isAdmin && !isMultiAreaReadOnly && allAreas && (
+                <div className="container mx-auto mt-6">
+                    <label className="block text-xs font-semibold text-gray-500">
+                        Área
+                        <select
+                            value={filterAreaId}
+                            onChange={(e) => setFilterAreaId(e.target.value ? Number(e.target.value) : '')}
+                            className="mt-1 block w-64 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-[#a81c24] focus:ring-2 focus:ring-[#a81c24]/30 focus:outline-none"
+                        >
+                            <option value="">Todas las áreas</option>
+                            {(allAreas as AreaOption[]).map((a) => (
+                                <option key={a.id} value={a.id}>
+                                    {a.nombre}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
+            )}
+
             {isMultiAreaReadOnly && (
                 <div className="container mx-auto mt-6">
                     <label className="block text-xs font-semibold text-gray-500">
@@ -549,14 +576,14 @@ const PlanVacaciones = ({ currentRouteName }: CurrentProps) => {
                             </tr>
                         </thead>
                         <tbody>
-                            {(employees as EmployeeRow[]).length === 0 ? (
+                            {displayedEmployees.length === 0 ? (
                                 <tr>
                                     <td colSpan={canManage ? 5 : 4} className="px-4 py-10 text-center text-gray-400">
                                         No hay empleados activos en esta área.
                                     </td>
                                 </tr>
                             ) : (
-                                (employees as EmployeeRow[]).map((e) => {
+                                displayedEmployees.map((e) => {
                                     const temporal = isTemporal(e);
                                     return (
                                         <tr key={e.uid} className="border-t border-gray-100">

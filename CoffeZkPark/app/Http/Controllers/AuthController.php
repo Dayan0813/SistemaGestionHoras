@@ -97,7 +97,23 @@ class AuthController extends Controller
         $employees = Employee::query()
             ->whereDoesntHave('user') // evita duplicar empleado
             ->orderByName()
-            ->get(['uid', 'nombres', 'apellidos']);
+            ->get(['uid', 'nombres', 'apellidos', 'area_id']);
+
+        $coordinators = User::whereHas('roles', fn ($q) => $q->where('role', 'coordinator'))
+            ->with([
+                'employee:uid,nombres,apellidos',
+                'coordinatorAreas.area:id,nombre',
+            ])
+            ->get()
+            ->map(fn ($u) => [
+                'id'    => $u->id,
+                'email' => $u->email,
+                'name'  => $u->employee?->name ?? $u->email,
+                'areas' => $u->coordinatorAreas->map(fn ($ca) => [
+                    'id'     => $ca->area_id,
+                    'nombre' => $ca->area?->nombre,
+                ])->values()->all(),
+            ]);
 
         return Inertia::render('Auth/Register', [
             'employees' => $employees,
@@ -108,6 +124,8 @@ class AuthController extends Controller
                 'admin_nomina',
                 'aux_th',
             ],
+            'areas'        => \App\Models\area::orderBy('nombre')->get(['id', 'nombre']),
+            'coordinators' => $coordinators,
         ]);
     }
 
@@ -202,6 +220,8 @@ class AuthController extends Controller
                 'exists:employees,uid',
                 'unique:users,employee_uid',
             ],
+            'area_ids' => ['nullable', 'array'],
+            'area_ids.*' => ['integer', 'exists:areas,id'],
         ]);
 
         $user = User::create([
@@ -215,6 +235,16 @@ class AuthController extends Controller
             'role' => $validated['role'],
         ]);
 
+        // Áreas asignadas al coordinador
+        if ($validated['role'] === 'coordinator' && !empty($validated['area_ids'])) {
+            foreach ($validated['area_ids'] as $areaId) {
+                \App\Models\CoordinatorArea::create([
+                    'user_id' => $user->id,
+                    'area_id' => $areaId,
+                ]);
+            }
+        }
+
         return redirect()
             ->route('users.create')
             ->with('success', '✅ Usuario creado correctamente');
@@ -227,6 +257,26 @@ class AuthController extends Controller
      * 
      * ======================================
      */
+
+    public function updateCoordinatorAreas(Request $request, User $user)
+    {
+        $validated = $request->validate([
+            'area_ids'   => ['present', 'array'],
+            'area_ids.*' => ['integer', 'exists:areas,id'],
+        ]);
+
+        if (!$user->hasRole('coordinator')) {
+            abort(422, 'El usuario no es coordinador.');
+        }
+
+        // Reemplaza todas las áreas del coordinador
+        \App\Models\CoordinatorArea::where('user_id', $user->id)->delete();
+        foreach ($validated['area_ids'] as $areaId) {
+            \App\Models\CoordinatorArea::create(['user_id' => $user->id, 'area_id' => $areaId]);
+        }
+
+        return redirect()->route('users.create')->with('success', '✅ Áreas del coordinador actualizadas.');
+    }
 
     public function logout(Request $request)
     {

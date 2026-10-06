@@ -24,6 +24,17 @@ class User extends Authenticatable
         return $this->belongsTo(Employee::class, 'employee_uid', 'uid');
     }
 
+    // Áreas asignadas al coordinador (puede tener varias)
+    public function coordinatorAreas()
+    {
+        return $this->hasMany(CoordinatorArea::class);
+    }
+
+    public function coordinatorAreaIds(): array
+    {
+        return $this->coordinatorAreas()->pluck('area_id')->map(fn ($id) => (int) $id)->all();
+    }
+
     //  Roles de sistema (UNO A MUCHOS)
     public function roles()
     {

@@ -144,6 +144,9 @@ Route::middleware(['auth', 'permission:usuarios.gestionar'])->group(function () 
     Route::get('/users/create', [AuthController::class, 'createUser'])->name('users.create');
 
     Route::post('/users', [AuthController::class, 'storeUser'])->name('users.store');
+
+    // Editar áreas asignadas a un coordinador
+    Route::put('/users/{user}/coordinator-areas', [AuthController::class, 'updateCoordinatorAreas'])->name('users.updateCoordinatorAreas');
 });
 
 Route::middleware(['auth', 'permission:areas.gestionar'])->group(function () {
@@ -292,7 +295,7 @@ Route::middleware(['auth', 'permission:ausencias.ver'])->group(function () {
                 ->get(['uid', 'nombres', 'apellidos', 'contrato_id', 'dias_vacaciones_disponibles', 'area_id']),
             'highSeasonRanges' => \App\Services\OperatingCalendar::highSeasonRanges(),
             'vacationReminderMonths' => \App\Models\CompanySetting::get('vacation_reminder_months', 3),
-            'allAreas' => $isMultiAreaReadOnly ? area::orderBy('nombre')->get(['id', 'nombre']) : null,
+            'allAreas' => ($isAdmin || $isMultiAreaReadOnly) ? area::orderBy('nombre')->get(['id', 'nombre']) : null,
             'selectedArea' => $isMultiAreaReadOnly ? $areaId : null,
         ]);
     })->name('plan-vacaciones');

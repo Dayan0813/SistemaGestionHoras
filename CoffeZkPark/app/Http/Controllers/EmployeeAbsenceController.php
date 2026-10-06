@@ -6,7 +6,6 @@ use App\Http\Controllers\Concerns\EnsuresAreaAccess;
 use App\Models\area;
 use App\Models\Employee;
 use App\Models\EmployeeAbsence;
-use App\Models\EmployeeAbsenceSnapshot;
 use App\Models\Programations;
 use App\Support\ColombianHolidays;
 use Carbon\Carbon;
@@ -949,22 +948,6 @@ class EmployeeAbsenceController extends Controller
             ->where('employee_uid', $absence->replacement_employee_uid)
             ->delete();
 
-        foreach ($absence->snapshots()->get() as $snapshot) {
-            Programations::create([
-                'employee_uid' => $snapshot->employee_uid,
-                'type' => $snapshot->type,
-                'area_id' => $absence->area_id,
-                'calendar_id' => $snapshot->calendar_id,
-                'work_position_id' => $snapshot->work_position_id,
-                'start_date' => $snapshot->start_date,
-                'end_date' => $snapshot->end_date,
-                'status' => $snapshot->status,
-                'group_code' => $snapshot->group_code,
-                'work_days' => $snapshot->work_days,
-            ]);
-        }
-        $absence->snapshots()->delete();
-
         if ($absence->type === 'vacaciones' && $absence->days) {
             Employee::where('uid', $absence->employee_uid)->increment('dias_vacaciones_disponibles', $absence->days);
         }
@@ -994,10 +977,8 @@ class EmployeeAbsenceController extends Controller
             ->where('end_date', '>=', $earliest)
             ->get();
 
-        // Snapshots y filas nuevas se acumulan aquí y se insertan en batch al final (en vez de
         // un INSERT por candidata/bloque dentro del loop) — una incapacidad larga que toca
         // varias programaciones semanales podía generar decenas de INSERT secuenciales.
-        $snapshotRows = [];
         $newProgramationRows = [];
         $idsToDelete = [];
         $now = now();
@@ -1009,23 +990,6 @@ class EmployeeAbsenceController extends Controller
             if (empty($overlapsHidden)) {
                 continue;
             }
-
-            $snapshotRows[] = [
-                'employee_absence_id' => $absence->id,
-                'employee_uid' => $candidate->employee_uid,
-                'calendar_id' => $candidate->calendar_id,
-                'work_position_id' => $candidate->work_position_id,
-                // insert() no pasa por los casts de Eloquent — start_date/end_date llegan como
-                // objetos Carbon (cast 'date' del modelo) y hay que serializarlos a string.
-                'start_date' => $candidate->start_date->toDateString(),
-                'end_date' => $candidate->end_date->toDateString(),
-                'status' => $candidate->status,
-                'type' => $candidate->type,
-                'group_code' => $candidate->group_code,
-                'work_days' => $candidate->work_days !== null ? json_encode($candidate->work_days) : null,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ];
 
             $remainingDays = array_values(array_diff($candidateDays, array_keys($hiddenDaySet)));
             sort($remainingDays);

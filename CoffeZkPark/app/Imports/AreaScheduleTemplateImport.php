@@ -187,7 +187,7 @@ class AreaScheduleTemplateImport implements ToCollection, WithMultipleSheets{
                 if ($parsed['type'] === 'vacaciones' || $parsed['type'] === 'incapacidad') {
                     $overlay[$uid][$dateIso] = ['type' => $parsed['type']];
                 } elseif ($parsed['type'] === 'shift') {
-                    $calendar = isset($parsed['calendar_id']) ? $calendarsByIñd->get($parsed['calendar_id']) : null;
+                    $calendar = isset($parsed['calendar_id']) ? $calendarsById->get($parsed['calendar_id']) : null;
                     $overlay[$uid][$dateIso] = [
                         'type' => 'shift',
                         'hora_entrada' => $calendar?->hora_entrada ?? $parsed['hora_entrada'] ?? null,

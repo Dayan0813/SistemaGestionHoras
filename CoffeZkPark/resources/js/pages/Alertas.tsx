@@ -16,10 +16,6 @@ export default function Alertas() {
                     <Construction size={22} />
                 </span>
                 <h2 className="text-base font-semibold text-gray-800">Esta funcionalidad todavía no está disponible</h2>
-                <p className="max-w-sm text-sm text-gray-500">
-                    Las alertas de asistencia (tardanzas, inasistencias, salidas sin marcar) todavía no están conectadas a datos reales. Se
-                    habilitarán cuando se definan las reglas que determinan qué situaciones generan una alerta.
-                </p>
             </div>
 
             <div className="mx-auto flex max-w-lg items-center gap-3 rounded-full border border-gray-200 bg-white px-4 py-2 text-gray-300">

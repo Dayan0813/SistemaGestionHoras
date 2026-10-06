@@ -5,6 +5,10 @@ import React, { useState } from 'react';
 interface EligibleEmployee {
     uid: string;
     name: string;
+    // Correo de su usuario si ya tiene cuenta (se reutiliza); null si hay que crearla.
+    user_email?: string | null;
+    // Área a la que pertenece hoy (al crear el área nueva queda en ella).
+    area_name?: string | null;
 }
 
 interface Props {
@@ -30,6 +34,7 @@ export default function CreateAreaModal({ show, eligibleEmployees, onClose }: Pr
     if (!show) return null;
 
     const filteredEmployees = eligibleEmployees.filter((emp) => emp.name.toLowerCase().includes(search.toLowerCase()));
+    const selectedEmployee = eligibleEmployees.find((emp) => emp.uid === data.coordinator_employee_uid) ?? null;
 
     const handleClose = () => {
         reset();
@@ -115,8 +120,8 @@ export default function CreateAreaModal({ show, eligibleEmployees, onClose }: Pr
 
                         {eligibleEmployees.length === 0 ? (
                             <p className="rounded bg-amber-50 p-3 text-xs text-amber-700">
-                                No hay empleados disponibles para asignar como coordinador — primero debe existir el empleado (sin cuenta de
-                                usuario todavía) antes de poder crear el área.
+                                No hay empleados activos para asignar como coordinador — primero debe existir el empleado antes de poder
+                                crear el área.
                             </p>
                         ) : (
                             <>
@@ -146,6 +151,7 @@ export default function CreateAreaModal({ show, eligibleEmployees, onClose }: Pr
                                                     }}
                                                 >
                                                     {emp.name}
+                                                    {emp.user_email && <span className="ml-1 text-xs opacity-70">· ya tiene usuario</span>}
                                                 </li>
                                             ))}
                                         </ul>
@@ -156,6 +162,21 @@ export default function CreateAreaModal({ show, eligibleEmployees, onClose }: Pr
                                     )}
                                 </div>
 
+                                {selectedEmployee?.user_email ? (
+                                    // Ya tiene cuenta: se reutiliza, no se piden correo ni contraseña.
+                                    <div className="rounded bg-green-50 p-3 text-xs text-green-800">
+                                        <p>
+                                            <b>{selectedEmployee.name}</b> ya tiene usuario: <b>{selectedEmployee.user_email}</b>. Entrará con esa
+                                            misma cuenta y contraseña, y quedará como coordinador de esta área.
+                                        </p>
+                                        {selectedEmployee.area_name && (
+                                            <p className="mt-1 text-amber-700">
+                                                Hoy pertenece al área <b>{selectedEmployee.area_name}</b>: pasará a esta área nueva.
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                <>
                                 <div className="mb-3">
                                     <label className="block text-sm font-medium text-gray-700">Correo del coordinador</label>
                                     <input
@@ -179,6 +200,8 @@ export default function CreateAreaModal({ show, eligibleEmployees, onClose }: Pr
                                         <p className="mt-1 text-xs text-red-600">{errors.coordinator_password}</p>
                                     )}
                                 </div>
+                                </>
+                                )}
                             </>
                         )}
                     </div>

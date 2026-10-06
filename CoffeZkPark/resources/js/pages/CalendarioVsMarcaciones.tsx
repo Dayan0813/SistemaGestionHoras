@@ -16,13 +16,6 @@ export default function CalendarioVsMarcaciones() {
                     <Construction size={22} />
                 </span>
                 <h2 className="text-base font-semibold text-gray-800">Esta funcionalidad todavía no está disponible</h2>
-                <p className="max-w-sm text-sm text-gray-500">
-                    La comparación día a día contra datos reales todavía no está conectada. Falta definir, por ejemplo, cuántos minutos de
-                    diferencia cuentan como una entrada tardía antes de habilitarla.
-                </p>
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-400">
-                    <CalendarClock size={14} /> El motor de horarios y marcaciones ya existe — falta esa definición y conectar la vista.
-                </p>
             </div>
         </div>
     );

@@ -47,13 +47,6 @@ class EmployeeAbsence extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    // Copias de las filas de Programations del ausente recortadas al registrar esta
-    // ausencia — ver EmployeeAbsenceController::hideAbsentDays()/destroy().
-    public function snapshots()
-    {
-        return $this->hasMany(EmployeeAbsenceSnapshot::class, 'employee_absence_id');
-    }
-
     // Marca las Programations creadas para el reemplazo por ESTA ausencia, para poder
     // identificarlas y revertirlas al cancelar sin tocar el schema de programations.
     public function groupCode(): string

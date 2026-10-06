@@ -59,7 +59,7 @@ const Servicios = ({ currentRouteName }: CurrentProps) => {
                         <h3 className="mb-3 flex items-center text-xl font-semibold">
                             Calendario operativo <CalendarDays className="ml-2" />
                         </h3>
-                        <p className="text-[#a81c24]">Tipo de cada día (AA, A, B, C) y personal mínimo por área</p>
+                        <p className="text-[#a81c24]">Tipo de cada día (A, B, C, D) y personal mínimo por área</p>
                     </div>
                     </Link>
                     <Link href={route('ausencias')}>
